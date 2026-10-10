@@ -16,10 +16,10 @@
 ## Layers
 
 ```
-app.py, pages/            Streamlit UI (8 pages). Research runs in a worker thread and reports through a queue
+app.py, app_pages/        Streamlit UI (welcome and five task pages). Research runs in a worker thread and reports through a queue
 src/orchestration/        LangGraph StateGraph, typed state, budget tracker
 src/agents/               planner, retriever, source_evaluator, critical_analyst, gap_analyst,
-                          insight_generator, report_builder (graph nodes) + qa (follow-up Q&A)
+                          insight_generator, data_visualizer, report_builder (eight graph agents) + qa (follow-up Q&A)
 src/search/               provider interface; Tavily, OpenAlex, Crossref, arXiv, demo corpus, uploads;
                           HTTP retries and SSRF-safe fetching
 src/ingestion/            PDF/TXT/MD/CSV/HTML extraction, location-preserving chunking
@@ -39,12 +39,12 @@ START → planner → retriever → source_evaluator → critical_analyst → ga
                                    ↑                                   │
                                    └─────── follow_up_retrieval ◄── follow_up
                                                                        │ synthesize
-                                          insight_generator → report_builder → END
+                                          insight_generator → data_visualizer → report_builder → END
 ```
 
 - **State** (`orchestration/state.py`) is a `TypedDict` of Pydantic objects: request, budget, plan, iteration,
   pending/searched queries, sources, passages, assessments, claims, evidence matrix, links, contradictions,
-  gaps, insights, report, agent statuses, usage, route decision. The audit-trail channels (events, search log,
+  gaps, insights, charts, visualization_notes, report, agent statuses, usage, route decision. The audit-trail channels (events, search log,
   warnings, errors) use an `add` reducer.
 - **Routing** comes from `gap_analyst.decide_route`, a pure, unit-tested function. It returns `synthesize` when
   the iteration limit is reached, the search/source/time budget is exhausted, no gap has
@@ -67,6 +67,7 @@ START → planner → retriever → source_evaluator → critical_analyst → ga
 | Critical Analysis | sources, passages, assessments, plan | claims, matrix, links, contradictions | optional (verbatim-quote check, contradiction adjudication) |
 | Gap & Follow-up | plan, claims, matrix, budget | gaps, plan revisions, route, pending_queries | no |
 | Insight Generation | claims, matrix, contradictions | insights (observed / inferred / speculative) | optional (claim ids must exist) |
+| Data Visualization | CSV metadata, passages, claims | charts, extraction notes | no (deterministic provenance checks) |
 | Report Builder | everything | report + citation checks | optional (prose rewrite; markers and numbers validated) |
 | Research Q&A | stored run bundle | answer with citations | optional (cited ids must be in retrieved set) |
 
@@ -78,7 +79,7 @@ START → planner → retriever → source_evaluator → critical_analyst → ga
   is identified by citation link, publication date and source type, and flagged `repeats_other_source`.
   Agreement counts *independent groups*, so repeated copies never look like corroboration.
 - **Claims**: heuristic extraction picks assertive sentences. LLM-proposed claims are accepted only if the
-  quote is found verbatim in a passage.
+  quote is found verbatim in a passage, numeric/unit/negation/forecast/uncertainty checks pass, and the canonical text is the quotation.
 - **Matrix**: claims are clustered by overlap of non-common terms. The majority polarity counts as supporting,
   the minority as contradicting. Agreement levels are strong (≥3 independent), moderate (2), single source,
   mixed and contested.
@@ -106,14 +107,37 @@ behind the `Retriever` protocol if paraphrase-heavy corpora require it.
   pages from search results through `safe_fetch`. That function blocks private, loopback, link-local and
   metadata addresses, disables automatic redirects (each hop is re-checked), and caps size and content type.
 - HTML export escapes all source markup before Markdown conversion.
-- Secrets come only from `.env`. The settings table refuses keys that look like secrets, and the UI shows only
+- Secrets come from `.env` or deployed Streamlit Secrets. The settings table refuses keys that look like secrets, and the UI shows only
   masked status.
 - Upload limits: file types, 15 MB, 300 PDF pages, 400k characters, 2,000 CSV rows.
+
+- Production defaults to requiring Google authentication and stops before opening shared storage if authentication
+  is missing, unreadable or incomplete. Only explicit `APP_ENV=local` permits a local administrator.
+- Evidence-derived matrices and report drafts are wrapped as untrusted input. Report rewrites must preserve their
+  citation-marker sets, contradiction verdicts are restricted to supported values, and unknown insight IDs are rejected.
+  Prompt boundaries reduce injection risk; they are not a guarantee of complete prevention.
 
 ## Persistence
 
 SQLite (`data/research.db`, git-ignored). `runs` holds request, plan, usage, statuses and summary. Per-run
 tables (`sources`, `passages`, `assessments`, `claims`, `matrix_rows`, `evidence_links`, `contradictions`,
-`gaps`, `insights`, `reports`, `events`, `search_log`, `qa_messages`) cascade on delete. `documents`,
-`search_cache` (24 h TTL) and `settings` are global. Source ids are stable hashes of canonical URL or DOI,
+`gaps`, `insights`, `charts`, `reports`, `events`, `search_log`, `qa_messages`) cascade on delete. `documents` are owner-scoped, as are runs and their children; `search_cache` (24 h TTL) is shared, while settings are scoped according to the repository API. Source ids are stable hashes of canonical URL or DOI,
 so the same source keeps the same id across runs.
+
+## Upgrade contracts
+
+Charts are persisted as validated JSON in a run-owned `charts` table and cascade on run deletion. Source row metadata is stored with uploaded documents; visualization notes are stored with runs. Additive migrations preserve existing databases, and old runs load with empty chart defaults. Existing uploads without structured metadata must be uploaded again. CSV extraction limits remain in force. Both SQLite and the local libSQL backend have persistence and ownership tests; hosted Turso connectivity is not established by those tests.
+
+The chart extractor produces a series only within a single source and compatible unit. Each point must resolve to an exact stored passage quotation. It does not perform joins, currency conversion, inferred data filling, or automatic chart extraction from PDF/web tables. Narrative percentages remain individual indicators, preserving their source wording and synthetic status.
+
+The budget tracker reserves estimated tokens under a lock before each API attempt, counts retries against actual request limits, releases successful reservations into reported usage, and retains unknown usage conservatively. Costs use explicitly configured input/output rates. This is per-run accounting, without user quotas or a global worker limit. HTTP fetches already in progress are bounded by HTTP timeouts rather than forcibly cancelled at the run deadline.
+
+See `docs/deployment.md` for the hosted workflow checklist and `docs/security.md` for the authentication and trust-boundary controls.
+
+## Configurable LangSmith observability
+
+`src/services/observability.py` provides optional request spans, an explicit research tracing context and worker helpers that copy `contextvars` separately for each submitted job. `research_service.py` gives the graph its `research-investigation` name and research run ID, mode and depth metadata. The LLM retry loop traces each actual attempt; provider/HTTP operations and page-fetch hops have nested spans. Existing budgets and persistence contracts remain in control.
+
+`LANGSMITH_TRACING=false` disables research tracing; `APP_API_TRACING=false` retains graph tracing while disabling application request spans. Default graph input/output hiding and metadata-only custom spans limit exported content, but graph errors and metadata require separate review. Tracing setup/cleanup exceptions are isolated; failure behavior still requires runtime verification.
+
+See [observability.md](observability.md) for configuration, span contracts, usage interpretation and the current verification record. The local user screenshots confirm agent/model/provider/HTTP traces, not exhaustive parallel-context or retry correctness.

@@ -164,7 +164,7 @@ CREATE TABLE IF NOT EXISTS qa_messages (
     created_at TEXT NOT NULL
 );
 
--- Uploaded documents are global (reusable across runs) and can be deleted independently.
+-- Uploaded documents are owner-scoped (reusable across that owner's runs) and can be deleted independently.
 CREATE TABLE IF NOT EXISTS documents (
     id TEXT PRIMARY KEY,
     owner_id TEXT NOT NULL DEFAULT 'local',
@@ -190,4 +190,10 @@ CREATE TABLE IF NOT EXISTS search_cache (
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+
+-- Chart payloads contain values and passage provenance, scoped through run ownership.
+CREATE TABLE IF NOT EXISTS charts (
+ run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE, id TEXT NOT NULL, data TEXT NOT NULL,
+ PRIMARY KEY (run_id, id)
 );

@@ -12,6 +12,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SAMPLE_DIR = PROJECT_ROOT / "data" / "sample_research"
 
 load_dotenv(PROJECT_ROOT / ".env")
+# Default to suppressing graph-state and model payloads before LangSmith initializes.
+os.environ.setdefault("LANGSMITH_HIDE_INPUTS", "true")
+os.environ.setdefault("LANGSMITH_HIDE_OUTPUTS", "true")
 
 APP_NAME = "Deep Researcher AI"
 
@@ -34,6 +37,9 @@ class Settings:
     max_upload_mb: int
     turso_database_url: str | None = None  # libsql://<db>-<org>.<region>.turso.io (not secret on its own)
     turso_auth_token: str | None = None  # secret
+    input_usd_per_million: float = 0.0
+    output_usd_per_million: float = 0.0
+    app_env: str = "production"  # local mode must be explicitly enabled; deployments require authentication
     admin_emails: tuple[str, ...] = ()  # signed-in users who may change app-wide settings
 
     @property
@@ -62,6 +68,9 @@ def mask_secret(secret: str | None) -> str:
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    app_env = (_env("APP_ENV", "production") or "production").lower()
+    if app_env not in {"local", "production"}:
+        raise ValueError("APP_ENV must be local or production.")
     db = Path(_env("APP_DB_PATH", "data/research.db"))
     return Settings(
         openrouter_api_key=_env("OPENROUTER_API_KEY"),
@@ -75,5 +84,8 @@ def get_settings() -> Settings:
         max_upload_mb=int(_env("MAX_UPLOAD_MB", "15")),
         turso_database_url=_env("TURSO_DATABASE_URL"),
         turso_auth_token=_env("TURSO_AUTH_TOKEN"),
+        input_usd_per_million=max(0.0, float(_env("LLM_INPUT_USD_PER_MILLION", "0"))),
+        output_usd_per_million=max(0.0, float(_env("LLM_OUTPUT_USD_PER_MILLION", "0"))),
+        app_env=app_env,
         admin_emails=tuple(e.strip().lower() for e in (_env("ADMIN_EMAILS", "") or "").split(",") if e.strip()),
     )

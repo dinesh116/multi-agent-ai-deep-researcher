@@ -145,7 +145,8 @@ def _llm_answer(bundle: RunBundle, question: str, rows, passages, llm: LLMClient
     for r, _ in rows:
         for sid in r.supporting_source_ids[:3]:
             allowed.setdefault(sid, next((p for p in bundle.passages if p.source_id == sid), None))
-    prompt = (f"Follow-up question about a completed investigation: {question}\n\nEvidence-matrix rows:\n{row_text}\n\n"
+    prompt = ("Follow-up question about a completed investigation:\n" + wrap_untrusted("user_question", question)
+              + "\n\nEvidence-matrix rows:\n" + wrap_untrusted("evidence_matrix", row_text) + "\n\n"
               "Source passages:\n" + "\n".join(blocks) +
               "\n\nAnswer using the evidence above. Cite sources inline by writing their id in square brackets, e.g. "
               "[src_abc123]. Point out conflicting evidence and missing evidence. If you add anything from general "

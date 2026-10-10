@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 import httpx
 
 from src.search.base import ProviderError
+from src.services.observability import operation, span
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -31,7 +32,14 @@ def with_retries(fn: Callable[[], T], attempts: int = 3, base_delay: float = 1.0
     last: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
-            return fn()
+            with span("http.request_attempt", metadata={"attempt": attempt}) as telemetry:
+                try:
+                    result = fn()
+                    telemetry["outcome"] = "completed"
+                    return result
+                except httpx.HTTPStatusError as exc:
+                    telemetry["http_status"] = exc.response.status_code
+                    raise
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             if status not in TRANSIENT_STATUS:
@@ -54,6 +62,7 @@ class HttpClient:
         self.client = httpx.Client(timeout=timeout, headers={"User-Agent": agent}, follow_redirects=False,
                                    transport=transport)
 
+    @operation("http.get_json")
     def get_json(self, url: str, params: dict | None = None, headers: dict | None = None) -> dict:
         def call():
             response = self.client.get(url, params=params, headers=headers)
@@ -61,6 +70,7 @@ class HttpClient:
             return response.json()
         return with_retries(call)
 
+    @operation("http.post_json")
     def post_json(self, url: str, payload: dict, headers: dict | None = None) -> dict:
         def call():
             response = self.client.post(url, json=payload, headers=headers)
@@ -68,6 +78,7 @@ class HttpClient:
             return response.json()
         return with_retries(call)
 
+    @operation("http.get_text")
     def get_text(self, url: str, params: dict | None = None) -> str:
         def call():
             response = self.client.get(url, params=params)
@@ -75,6 +86,7 @@ class HttpClient:
             return response.text
         return with_retries(call)
 
+    @operation("http.safe_fetch")
     def safe_fetch(self, url: str, max_redirects: int = 3) -> str | None:
         """Fetch a public web page's HTML. Returns None (never raises) when blocked or unavailable."""
         for _ in range(max_redirects + 1):
@@ -82,7 +94,8 @@ class HttpClient:
                 logger.info("Blocked non-public URL")
                 return None
             try:
-                with self.client.stream("GET", url) as response:
+                with span("http.fetch_attempt", metadata={"redirect_hop": _}) as telemetry, self.client.stream("GET", url) as response:
+                    telemetry["http_status"] = response.status_code
                     if response.is_redirect:
                         url = str(response.next_request.url) if response.next_request else ""
                         continue

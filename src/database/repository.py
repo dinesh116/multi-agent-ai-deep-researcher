@@ -17,11 +17,12 @@ from src.models.evidence import (AgentEvent, AgentStatus, Claim, Contradiction, 
                                  Passage, Report, ResearchGap, Source, SourceAssessment)
 from src.models.research import BudgetUsage, ResearchPlan, ResearchRequest, new_id, now
 from src.models.run import RunBundle, RunSummary
+from src.models.visualization import EvidenceChart
 
 SCHEMA = Path(__file__).with_name("schema.sql")
 LOCAL_OWNER = "local"
 RUN_CHILD_TABLES = ("sources", "passages", "assessments", "claims", "matrix_rows", "evidence_links", "contradictions",
-                    "gaps", "insights", "reports", "events", "search_log", "qa_messages")
+                    "gaps", "insights", "charts", "reports", "events", "search_log", "qa_messages")
 
 
 def _dump(model) -> str:
@@ -58,6 +59,11 @@ class Repository:
                     SELECT id, '{LOCAL_OWNER}', filename, title, kind, sha256, size_bytes, sections, warnings, uploaded_at
                     FROM documents_old;
                 DROP TABLE documents_old;""")
+        doc_cols = {r["name"] for r in db.rows("PRAGMA table_info(documents)")}
+        if "metadata" not in doc_cols:
+            db.execute("ALTER TABLE documents ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'")
+        if "visualization_notes" not in run_cols:
+            db.execute("ALTER TABLE runs ADD COLUMN visualization_notes TEXT NOT NULL DEFAULT '[]'")
         db.execute("CREATE INDEX IF NOT EXISTS idx_runs_owner ON runs(owner_id, created_at)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_documents_owner ON documents(owner_id)")
 
@@ -109,7 +115,7 @@ class Repository:
         exec_summary = report.section("executive_summary").content if report and report.section("executive_summary") else ""
         counts = {"sources": len(state.get("sources", [])), "claims": len(state.get("claims", [])),
                   "contradictions": len(state.get("contradictions", [])), "insights": len(state.get("insights", [])),
-                  "iterations": state.get("iteration", 0) + 1, "gaps": len(state.get("gaps", []))}
+                  "charts": len(state.get("charts", [])), "iterations": state.get("iteration", 0) + 1, "gaps": len(state.get("gaps", []))}
         with self.backend.session() as db:
             existing = db.one("SELECT owner_id FROM runs WHERE id = ?", (run_id,))
             if existing and existing["owner_id"] != owner_id:
@@ -129,6 +135,8 @@ class Repository:
                  state.get("stop_reason", ""), exec_summary[:4000],
                  json.dumps(list(dict.fromkeys(state.get("warnings", [])))), json.dumps(state.get("errors", [])),
                  json.dumps(state.get("provider_notes", [])), json.dumps(counts), run_id, owner_id))
+            db.execute("UPDATE runs SET visualization_notes = ? WHERE id = ? AND owner_id = ?",
+                       (json.dumps(state.get("visualization_notes", [])), run_id, owner_id))
             for table in RUN_CHILD_TABLES:
                 if table != "qa_messages":
                     db.execute(f"DELETE FROM {table} WHERE run_id = ?", (run_id,))
@@ -151,6 +159,8 @@ class Repository:
             db.insert_many("gaps", ("run_id", "id", "data"), [(run_id, g.id, _dump(g)) for g in state.get("gaps", [])])
             db.insert_many("insights", ("run_id", "id", "kind", "label", "data"), [
                 (run_id, i.id, i.kind.value, i.label.value, _dump(i)) for i in state.get("insights", [])])
+            db.insert_many("charts", ("run_id", "id", "data"), [
+                (run_id, c.id, _dump(c)) for c in state.get("charts", [])])
             if report:
                 db.execute("INSERT INTO reports (run_id, title, data, created_at) VALUES (?, ?, ?, ?)",
                            (run_id, report.title, _dump(report), report.created_at.isoformat()))
@@ -164,11 +174,12 @@ class Repository:
     def _summary(r: dict) -> RunSummary:
         return RunSummary(id=r["id"], question=r["question"], status=r["status"], mode=r["mode"],
                           created_at=r["created_at"], completed_at=r["completed_at"], summary=r["summary"] or "",
-                          counts=json.loads(r["counts"] or "{}"), parent_run_id=r["parent_run_id"])
+                          counts=json.loads(r["counts"] or "{}"), parent_run_id=r["parent_run_id"],
+                          depth=str(json.loads(r.get("request") or "{}").get("depth", "")))
 
     def list_runs(self, owner_id: str = LOCAL_OWNER, limit: int = 100) -> list[RunSummary]:
         with self.backend.session() as db:
-            rows = db.rows("SELECT id, question, status, mode, created_at, completed_at, summary, counts, parent_run_id "
+            rows = db.rows("SELECT id, question, status, mode, created_at, completed_at, summary, counts, parent_run_id, request "
                            "FROM runs WHERE owner_id = ? ORDER BY created_at DESC LIMIT ?", (owner_id, limit))
         return [self._summary(r) for r in rows]
 
@@ -201,6 +212,8 @@ class Repository:
                 contradictions=[Contradiction.model_validate_json(d) for d in data("contradictions")],
                 gaps=[ResearchGap.model_validate_json(d) for d in data("gaps")],
                 insights=[Insight.model_validate_json(d) for d in data("insights")],
+                charts=[EvidenceChart.model_validate_json(d) for d in data("charts")],
+                visualization_notes=json.loads(run.get("visualization_notes") or "[]"),
                 report=Report.model_validate_json(report_row["data"]) if report_row else None,
                 events=[AgentEvent.model_validate_json(d) for d in data("events", "seq")],
                 search_log=[json.loads(d) for d in data("search_log", "seq")],
@@ -262,18 +275,23 @@ class Repository:
 
     # ------------------------------------------------------------------ documents (per owner)
     def save_document(self, filename: str, title: str, kind: str, data: bytes, sections: list[tuple[str, str]],
-                      warnings: list[str], owner_id: str = LOCAL_OWNER) -> tuple[str, bool]:
+                      warnings: list[str], owner_id: str = LOCAL_OWNER, metadata: dict | None = None) -> tuple[str, bool]:
         """Returns (document id, created). The same file is stored once per owner."""
         digest = hashlib.sha256(data).hexdigest()
         with self.backend.session() as db:
             existing = db.one("SELECT id FROM documents WHERE owner_id = ? AND sha256 = ?", (owner_id, digest))
             if existing:
+                if metadata:
+                    db.execute("UPDATE documents SET metadata = ? WHERE id = ? AND owner_id = ?",
+                               (json.dumps(metadata), existing["id"], owner_id))
                 return existing["id"], False
             doc_id = new_id("doc")
             db.execute("INSERT INTO documents (id, owner_id, filename, title, kind, sha256, size_bytes, sections, warnings, "
                        "uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                        (doc_id, owner_id, filename, title, kind, digest, len(data), json.dumps(sections),
                         json.dumps(warnings), now().isoformat()))
+            db.execute("UPDATE documents SET metadata = ? WHERE id = ? AND owner_id = ?",
+                       (json.dumps(metadata or {}), doc_id, owner_id))
             return doc_id, True
 
     def list_documents(self, owner_id: str = LOCAL_OWNER) -> list[dict]:
@@ -291,7 +309,8 @@ class Repository:
             rows = db.rows(f"SELECT * FROM documents WHERE owner_id = ? AND id IN ({','.join('?' * len(ids))})",
                            [owner_id, *ids])
         return [{"id": r["id"], "filename": r["filename"], "title": r["title"], "kind": r["kind"],
-                 "sections": [tuple(s) for s in json.loads(r["sections"])]} for r in rows]
+                 "sections": [tuple(s) for s in json.loads(r["sections"])],
+                 "metadata": json.loads(r.get("metadata") or "{}") } for r in rows]
 
     def delete_document(self, doc_id: str, owner_id: str = LOCAL_OWNER) -> None:
         with self.backend.session() as db:

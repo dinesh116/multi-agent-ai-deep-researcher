@@ -21,6 +21,7 @@ from langgraph.graph import END, START, StateGraph
 
 from src.agents.base import Agent, RunContext
 from src.agents.critical_analyst import CriticalAnalystAgent
+from src.agents.data_visualizer import DataVisualizationAgent
 from src.agents.gap_analyst import GapAnalystAgent
 from src.agents.insight_generator import InsightGeneratorAgent
 from src.agents.planner import PlannerAgent
@@ -34,14 +35,15 @@ logger = logging.getLogger(__name__)
 
 AGENTS: dict[str, Agent] = {a.name: a for a in (PlannerAgent(), RetrieverAgent(), SourceEvaluatorAgent(),
                                                 CriticalAnalystAgent(), GapAnalystAgent(), InsightGeneratorAgent(),
-                                                ReportBuilderAgent())}
+                                                DataVisualizationAgent(), ReportBuilderAgent())}
 NODE_AGENT = {"planner": "planner", "retriever": "retriever", "follow_up_retrieval": "retriever",
               "source_evaluator": "source_evaluator", "critical_analyst": "critical_analyst",
-              "gap_analyst": "gap_analyst", "insight_generator": "insight_generator", "report_builder": "report_builder"}
+              "gap_analyst": "gap_analyst", "insight_generator": "insight_generator",
+              "data_visualizer": "data_visualizer", "report_builder": "report_builder"}
 NODE_LABELS = {"planner": "Research Planner", "retriever": "Contextual Retriever",
                "follow_up_retrieval": "Contextual Retriever (follow-up)", "source_evaluator": "Source Evaluation",
                "critical_analyst": "Critical Analysis", "gap_analyst": "Research Gap & Follow-up",
-               "insight_generator": "Insight Generation", "report_builder": "Report Builder"}
+               "insight_generator": "Insight Generation", "data_visualizer": "Data Visualization", "report_builder": "Report Builder"}
 
 
 class EventLog:
@@ -119,7 +121,8 @@ def build_graph(ctx: RunContext):
     graph.add_conditional_edges("gap_analyst", route_after_gaps,
                                 {"follow_up": "follow_up_retrieval", "synthesize": "insight_generator"})
     graph.add_edge("follow_up_retrieval", "source_evaluator")
-    graph.add_edge("insight_generator", "report_builder")
+    graph.add_edge("insight_generator", "data_visualizer")
+    graph.add_edge("data_visualizer", "report_builder")
     graph.add_edge("report_builder", END)
     return graph.compile()
 

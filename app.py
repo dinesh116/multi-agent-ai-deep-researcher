@@ -7,95 +7,113 @@ import logging
 import streamlit as st
 
 from src.config import APP_NAME
-from src.ui.components import hero, inject_css
-from src.ui.state import current_user, get_repo, sidebar
+from src.models.research import DEMO_QUESTIONS
+from src.ui.components import AGENT_INFO, AGENT_TITLES, eyebrow, html, inject_css
+from src.ui.state import current_user, get_repo, new_research, sidebar
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-st.set_page_config(page_title=APP_NAME, page_icon=":material/science:", layout="wide")
+st.set_page_config(page_title=APP_NAME, page_icon="assets/icon.svg", layout="wide")
 
-AGENTS = [
-    ("01", "Research Planner", "Decomposes the question into prioritised subquestions, queries and completion criteria."),
-    ("02", "Contextual Retriever", "Searches web, academic and uploaded sources; deduplicates; follows cited leads."),
-    ("03", "Source Evaluation", "Relevance, primary vs secondary, freshness, bias, syndication and injection flags."),
-    ("04", "Critical Analysis", "Claims linked to exact passages, evidence matrix, contradictions and weaknesses."),
-    ("05", "Gap & Follow-up", "Finds gaps, writes targeted follow-up queries, decides whether to continue."),
-    ("06", "Insight Generation", "Findings, trends and hypotheses, each labelled observed, inferred or speculative."),
-    ("07", "Report Builder", "Structured report with inline citations, limitations and validated references."),
-    ("08", "Research Q&A", "Answers follow-up questions from the underlying evidence, with citations."),
-]
+
+def try_demo() -> None:
+    """Open the workspace in demo mode with the first sample question selected."""
+    for key in [k for k in st.session_state if k.startswith("q_")]:
+        st.session_state.pop(key, None)
+    st.session_state.update({"q_mode": "demo", "q_demo": DEMO_QUESTIONS[0]})
 
 
 def home() -> None:
-    hero("Research that shows its evidence", "Multi-hop, multi-source investigations by a team of specialised AI "
-                                             "agents, with every conclusion traceable to the passage that supports it.")
     user = current_user()
-    if user.is_guest:
-        with st.container(border=True):
-            left, right = st.columns([3, 1])
-            left.markdown("**Sign in for live research and a private history.** Your investigations, documents and "
-                          "activity are visible only to you. Without signing in you can try the synthetic demo.")
-            right.button("Sign in with Google", icon=":material/login:", on_click=st.login, args=("google",),
-                         type="primary", width="stretch")
-    elif user.auth_enabled:
-        st.caption(f"Signed in as {user.email or user.name}. Your history is private to your account.")
-    c1, c2, c3 = st.columns(3)
-    c1.page_link("pages/1_Research_Workspace.py", label="Start an investigation", icon=":material/arrow_forward:")
-    c2.page_link("pages/7_Research_History.py", label="Open a previous report", icon=":material/history:")
-    c3.page_link("pages/8_Settings.py", label="Configure providers & limits", icon=":material/tune:")
+    left, right = st.columns([1.05, 0.95], gap="large", vertical_alignment="center")
+    with left:
+        html(eyebrow("AI-powered deep research")
+             + '<div class="ds-hero-title">From complex questions<br>to <em>clear understanding.</em></div>'
+               '<p class="ds-lead">A team of specialised AI agents investigates, verifies and synthesises research '
+               "you can trust, with every finding traceable to the passage that supports it.</p>")
+        b1, b2 = st.columns(2)
+        if b1.button("Try Demo →", type="primary", width="stretch", key="hero_demo", on_click=try_demo):
+            st.switch_page("app_pages/1_Research_Workspace.py")
+        if user.is_guest:
+            b2.button("Sign in with Google", icon=":material/login:", width="stretch", key="hero_signin",
+                      on_click=st.login, args=("google",))
+        elif b2.button("Start researching", icon=":material/travel_explore:", width="stretch", key="hero_start"):
+            new_research()
+        html('<div class="ds-proof"><div class="ds-avatars"><span>R</span><span>A</span><span>T</span><span>+</span>'
+             '</div><span><b>Built for curious minds</b><small>Researchers · Analysts · Teams</small></span></div>')
+        if user.is_guest:
+            st.caption("Without signing in you can explore the demo with three sample questions. Sign in to research "
+                       "any question with live sources and keep a private history.")
+        elif user.auth_enabled:
+            st.caption(f"Signed in as {user.email or user.name}. Your history is private to your account.")
+    with right:
+        rows = [("planner", "Complete"), ("retriever", "Searching"), ("critical_analyst", "Queued")]
+        agent_rows = "".join(f'<div class="ds-vrow"><span class="ds-icon {AGENT_INFO[a][1]}">{AGENT_INFO[a][0]}</span>'
+                             f'<span>{AGENT_TITLES[a]}</span><b>{state}</b></div>' for a, state in rows)
+        html('<div class="ds-visual"><div class="ds-orb one"></div><div class="ds-orb two"></div><div class="ds-vcard">'
+             '<div class="ds-vtop"><span class="ds-dot"></span> RESEARCH IN PROGRESS <span class="ds-vlive">LIVE</span>'
+             f'</div><h3>{DEMO_QUESTIONS[0]}</h3>{agent_rows}<div class="ds-vfoot"><span>17 sources analysed</span>'
+             '<span>•••</span></div></div><div class="ds-chip a">✦ &nbsp; Verified citations</div>'
+             '<div class="ds-chip b">⌁ &nbsp; 8 agents working</div></div>')
+    html('<div class="ds-foot"><span>POWERED BY A TEAM OF SPECIALISED AI AGENTS</span><div><span>◈ Research</span>'
+         '<span>◎ Evidence</span><span>✳ Synthesis</span></div></div>')
 
+    st.write("")
+    html('<div style="text-align:center">' + eyebrow("A better way to research", center=True)
+         + '<div class="ds-title">Depth without the busywork.</div></div>')
+    features = [("⌕", "Investigate deeply", "Searches web, news, academic papers (OpenAlex, Crossref, arXiv) and your "
+                 "own documents, then follows up on gaps."),
+                ("✓", "Verify every claim", "Each finding links to the exact passage it came from; citations are "
+                 "checked and contradictions are surfaced."),
+                ("✧", "Make sense of it all", "A clear report with analysis, labelled insights (observed, inferred, "
+                 "speculative) and open questions.")]
+    for col, (icon, title, text) in zip(st.columns(3), features):
+        col.markdown(f'<div class="ds-feature"><span class="ds-icon ds-purple">{icon}</span><h3>{title}</h3>'
+                     f"<p>{text}</p></div>", unsafe_allow_html=True)
+
+    st.write("")
     st.subheader("How an investigation works")
-    st.markdown(
-        "1. **Plan**: the question is split into subquestions covering different perspectives, including evidence "
-        "*against* the premise.\n"
-        "2. **Retrieve**: each subquestion is searched in the configured sources, and passages keep their provenance.\n"
-        "3. **Evaluate & analyse**: sources are assessed, claims extracted, compared across *independent* sources, and "
-        "contradictions recorded.\n"
-        "4. **Follow up (bounded)**: gaps trigger targeted searches until the evidence is sufficient or the budget runs "
-        "out.\n"
-        "5. **Synthesise**: insights are labelled *observed / inferred / speculative*, then compiled into a cited report.")
-    with st.expander("Workflow graph (LangGraph)"):
-        st.graphviz_chart(WORKFLOW_DOT)
-
-    st.subheader("The agent team")
-    cols = st.columns(2)
-    for i, (icon, name, text) in enumerate(AGENTS):
-        with cols[i % 2].container(border=True):
-            st.markdown(f'<div class="dr-step">{icon}</div>', unsafe_allow_html=True)
-            st.markdown(f"**{name}**")
-            st.caption(text)
-    st.info("**Demo mode** works offline with a bundled synthetic corpus, and every demo source is labelled as "
-            "fictional. **Live mode** searches OpenAlex, Crossref and arXiv (no key needed), Tavily web search (with "
-            "`TAVILY_API_KEY`) and your uploads, and uses an LLM via OpenRouter when `OPENROUTER_API_KEY` is set.",
+    with st.container(key="card-how"):
+        st.markdown(
+            "1. **Plan**: the question is split into subquestions covering different perspectives, including evidence "
+            "*against* the premise.\n"
+            "2. **Retrieve**: each subquestion is searched in the configured sources, and passages keep their "
+            "provenance.\n"
+            "3. **Evaluate & analyse**: sources are assessed, claims extracted, compared across *independent* sources, "
+            "and contradictions recorded.\n"
+            "4. **Follow up (bounded)**: gaps trigger targeted searches until the evidence is sufficient or the budget "
+            "runs out.\n"
+            "5. **Synthesise**: insights are labelled *observed / inferred / speculative*, then compiled into a cited "
+            "report.")
+        with st.expander("Workflow graph (LangGraph)"):
+            st.graphviz_chart(WORKFLOW_DOT)
+    st.info("**Demo mode** works offline with a bundled synthetic dataset about AI and enterprise software, limited to "
+            "three sample questions; every demo source is labelled as fictional. **Live mode** (signed in) searches "
+            "OpenAlex, Crossref, arXiv, Tavily web search and your uploads, and uses an LLM via OpenRouter.",
             icon=":material/info:")
 
 
 WORKFLOW_DOT = """
-digraph G { rankdir=LR; bgcolor="transparent"; node [shape=box, style="filled", fillcolor="#ffffff", color="#2f45e8",
-  fontname="JetBrains Mono", fontsize=10, penwidth=1]; edge [color="#8a8a8a", fontname="JetBrains Mono", fontsize=9, arrowsize=.6];
-  START [shape=square, fillcolor="#2f45e8", fontcolor="#ffffff", label="start"]; END [shape=square, fillcolor="#0f0f0f", fontcolor="#ffffff", label="end"];
+digraph G { rankdir=LR; bgcolor="transparent"; node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#9d89e2",
+  fontname="Helvetica", fontsize=10, penwidth=1]; edge [color="#9294a6", fontname="Helvetica", fontsize=9, arrowsize=.6];
+  START [shape=circle, fillcolor="#7159dc", fontcolor="#ffffff", label="start"]; END [shape=circle, fillcolor="#111329", fontcolor="#ffffff", label="end"];
   START -> planner -> retriever -> source_evaluator -> critical_analyst -> gap_analyst;
   gap_analyst -> follow_up_retrieval [label="follow_up\\n(bounded)", style=dashed];
   follow_up_retrieval -> source_evaluator;
   gap_analyst -> insight_generator [label="synthesize", style=dashed];
-  insight_generator -> report_builder -> END; }
+  insight_generator -> data_visualizer -> report_builder -> END; }
 """
 
 inject_css()
 get_repo()
-sidebar()
 navigation = st.navigation({
-    "": [st.Page(home, title="Home", icon=":material/home:", default=True)],
-    "Research": [
-        st.Page("pages/1_Research_Workspace.py", title="Research Workspace", icon=":material/travel_explore:"),
-        st.Page("pages/2_Research_Progress.py", title="Research Progress", icon=":material/timeline:"),
-        st.Page("pages/3_Evidence_Explorer.py", title="Evidence Explorer", icon=":material/library_books:"),
-        st.Page("pages/4_Critical_Analysis.py", title="Critical Analysis", icon=":material/balance:"),
-        st.Page("pages/5_Insights.py", title="Insights & Hypotheses", icon=":material/lightbulb:"),
-        st.Page("pages/6_Research_Report.py", title="Research Report", icon=":material/description:"),
+    "": [st.Page(home, title="Welcome", icon=":material/home:", default=True)],
+    "Workspace": [
+        st.Page("app_pages/1_Research_Workspace.py", title="Research workspace", icon=":material/travel_explore:"),
+        st.Page("app_pages/2_Research_Progress.py", title="Agents in action", icon=":material/motion_photos_on:"),
+        st.Page("app_pages/3_Research_Results.py", title="Research results", icon=":material/article:"),
+        st.Page("app_pages/7_Research_History.py", title="Research library", icon=":material/collections_bookmark:"),
     ],
-    "Manage": [
-        st.Page("pages/7_Research_History.py", title="Research History", icon=":material/history:"),
-        st.Page("pages/8_Settings.py", title="Settings", icon=":material/settings:"),
-    ],
+    "Account": [st.Page("app_pages/8_Settings.py", title="Settings", icon=":material/settings:")],
 })
+sidebar()
 navigation.run()

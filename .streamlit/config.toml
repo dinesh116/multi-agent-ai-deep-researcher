@@ -1,67 +1,48 @@
-# Theme inspired by the Composio docs look: near-white / near-black surfaces, hairline borders,
-# square corners, a deep-blue accent, a neo-grotesk sans and JetBrains Mono for labels.
-# ABC Diatype (Composio's font) is commercially licensed, so Geist (OFL) is used as the sans-serif.
+# Theme from the "Synthora" wireframe: soft paper background, white cards, violet accent, navy ink,
+# DM Sans for text and Manrope for headings. The wireframe is light-only, so a single light theme is defined.
 
 [theme]
-font = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap, sans-serif"
-headingFont = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap, sans-serif"
-codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap, monospace"
+base = "light"
+font = "DM Sans:https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap, sans-serif"
+headingFont = "Manrope:https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap, sans-serif"
+codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap, monospace"
 baseFontSize = 15
-headingFontWeights = [500, 500, 500, 500, 500, 500]
-headingFontSizes = ["2.4rem", "1.55rem", "1.2rem", "1.05rem", "1rem", "0.95rem"]
-metricValueFontWeight = 500
-baseRadius = "none"
-buttonRadius = "none"
+headingFontWeights = [800, 700, 700, 700, 600, 600]
+headingFontSizes = ["2.3rem", "1.45rem", "1.15rem", "1.02rem", "0.95rem", "0.9rem"]
+metricValueFontWeight = 700
+baseRadius = "0.6rem"
+buttonRadius = "7px"
 showWidgetBorder = true
 showSidebarBorder = true
 linkUnderline = false
 
-[theme.light]
-primaryColor = "#0007cd"
-backgroundColor = "#fbfbfb"
-secondaryBackgroundColor = "#f3f3f3"
-textColor = "#0f0f0f"
-borderColor = "#e5e5e5"
-dataframeBorderColor = "#e5e5e5"
-dataframeHeaderBackgroundColor = "#f3f3f3"
-linkColor = "#0007cd"
-codeBackgroundColor = "#f3f3f3"
-blueColor = "#0007cd"
-greenColor = "#009588"
-orangeColor = "#f05100"
-yellowColor = "#fcbb00"
-redColor = "#dc2626"
-chartCategoricalColors = ["#0007cd", "#009588", "#f05100", "#fcbb00", "#104e64", "#f99c00", "#585858"]
+primaryColor = "#7159dc"
+backgroundColor = "#f7f7fb"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1d2038"
+borderColor = "#e4e4ee"
+dataframeBorderColor = "#ececf3"
+dataframeHeaderBackgroundColor = "#f5f4fa"
+linkColor = "#6751cc"
+codeBackgroundColor = "#f5f4fa"
+blueColor = "#4181bf"
+greenColor = "#27876e"
+orangeColor = "#b78127"
+yellowColor = "#e0a526"
+redColor = "#c0392b"
+violetColor = "#7159dc"
+chartCategoricalColors = ["#7159dc", "#27876e", "#4181bf", "#b78127", "#c0568c", "#389592", "#9294a6"]
 
-[theme.light.sidebar]
-backgroundColor = "#fbfbfb"
-secondaryBackgroundColor = "#f3f3f3"
-borderColor = "#e5e5e5"
-
-[theme.dark]
-primaryColor = "#5b8bf0"
-backgroundColor = "#0f0f0f"
-secondaryBackgroundColor = "#1c1c1c"
-textColor = "#fbfbfb"
-borderColor = "#262626"
-dataframeBorderColor = "#262626"
-dataframeHeaderBackgroundColor = "#1a1a1a"
-linkColor = "#5b8bf0"
-codeBackgroundColor = "#1a1a1a"
-blueColor = "#5b8bf0"
-greenColor = "#00bb7f"
-orangeColor = "#f99c00"
-yellowColor = "#fcbb00"
-redColor = "#ef4444"
-chartCategoricalColors = ["#5b8bf0", "#00bb7f", "#f99c00", "#ac4bff", "#ff2357", "#1447e6", "#b4b4b4"]
-
-[theme.dark.sidebar]
-backgroundColor = "#0f0f0f"
-secondaryBackgroundColor = "#1a1a1a"
-borderColor = "#262626"
+[theme.sidebar]
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f7f6fc"
+borderColor = "#e9eaf1"
 
 [server]
 maxUploadSize = 15
+
+[client]
+toolbarMode = "minimal"  # hides the developer "Deploy" button
 
 [browser]
 gatherUsageStats = false

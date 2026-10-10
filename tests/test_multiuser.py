@@ -120,6 +120,20 @@ def test_guests_cannot_run_live_research(repo, settings):
     assert state["report"] is not None and repo.list_runs("guest:abc")
 
 
+def test_demo_mode_only_runs_preselected_questions(repo, settings):
+    from src.models.research import DEMO_QUESTIONS, is_demo_question
+    assert len(DEMO_QUESTIONS) == 3 and all(is_demo_question(q) for q in DEMO_QUESTIONS)
+    assert is_demo_question("  " + DEMO_QUESTIONS[0].upper().replace(" ", "   "))  # whitespace / case insensitive
+    for owner in ("guest:abc", ALICE, LOCAL_OWNER):  # applies to everyone, signed in or not
+        with pytest.raises(ValueError, match="preselected demo questions"):
+            run_research(ResearchRequest(question="How will solid-state batteries reshape energy storage?"), settings,
+                         repo=repo, today=TODAY, owner_id=owner)
+    assert repo.list_runs("guest:abc") == []  # rejected before anything is stored
+    for question in DEMO_QUESTIONS:
+        state = run_research(ResearchRequest(question=question), settings, repo=repo, today=TODAY, owner_id="guest:abc")
+        assert state["report"] is not None and len(state["sources"]) >= 8
+
+
 def test_guest_data_is_purged_after_24h(repo, settings):
     state = run_research(ResearchRequest(question=QUESTION), settings, repo=repo, today=TODAY, owner_id="guest:old")
     run_research(ResearchRequest(question=QUESTION), settings, repo=repo, today=TODAY, owner_id=ALICE)

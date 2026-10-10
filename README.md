@@ -21,25 +21,39 @@ Requires Python 3.12+ (developed on 3.13). From this folder:
 ```bash
 uv venv --python 3.13                 # or: python3.13 -m venv .venv
 source .venv/bin/activate             # Windows: .venv\Scripts\activate
-uv pip install -r requirements.txt    # or: pip install -r requirements.txt
+uv pip install -r requirements.txt -c constraints.txt    # or: pip install -r requirements.txt -c constraints.txt
 
 cp .env.example .env                  # optional: add keys for live research (see below)
 streamlit run app.py                  # http://localhost:8501
-pytest                                # 106 tests, offline, no API keys needed
+pytest                                # offline; no API keys needed
 ```
 
 **From VS Code:** open this folder, select the `.venv` interpreter, then use **Run and Debug → "Deep Researcher AI
 (Streamlit)"**. Tests appear in the Testing panel.
 
+## Deployment security
+
+`APP_ENV` defaults to `production`: Google sign-in must be fully configured or the app stops before opening
+its shared repository. For private local development without accounts, explicitly set `APP_ENV=local`
+(the `.env.example` does this). Never use local mode for a public deployment. Set `APP_ENV="production"`
+in deployed Streamlit Secrets; do not deploy your local `.env`.
+
+Run `python scripts/scan_secrets.py` to scan tracked and non-ignored new files plus reachable Git history.
+The scanner reports candidate locations only, never credential values. See [docs/security.md](docs/security.md).
+
+Source passages, evidence matrices and report drafts are treated as untrusted data at LLM boundaries.
+Schema validation, allowed evidence IDs and preservation of report citation markers provide additional checks;
+these controls reduce prompt-injection risk but do not guarantee factual accuracy or complete prevention.
+
 ## Accounts, privacy and storage
 
-**Accounts (optional).** With Google sign-in configured, every research run, uploaded document, follow-up Q&A and
+**Accounts (required for public deployment).** With Google sign-in configured, every research run, uploaded document, follow-up Q&A and
 activity entry belongs to the signed-in user, and every database query is filtered by that user. Users can't list,
 open, delete or export each other's data, even by guessing a run id. Visitors who aren't signed in are **guests**:
-they can run the synthetic demo, which is visible only in their browser session and deleted after 24 hours, but not
-live research, uploads or settings. **Research History → My activity** shows sign-ins, runs, Q&A, exports and uploads,
+they can run the synthetic demo (three preselected questions), which is visible only in their browser session and
+deleted after 24 hours, but not live research, uploads or settings. **Research library → My activity** shows sign-ins, runs, Q&A, exports and uploads,
 and **Delete my data** removes everything a user owns. Admins (`ADMIN_EMAILS`) manage models and providers and see
-usage counts per user, never content. Without sign-in configured, the app runs as a single local user (who is admin).
+usage counts per user, never content. Without sign-in configured, only explicit `APP_ENV=local` allows a single local administrator. Production stops.
 
 **Set up Google sign-in (about 10 minutes):**
 1. Google Cloud Console → *APIs & Services* → *OAuth consent screen*: create one (External, your email as a test user).
@@ -64,11 +78,17 @@ dashboard. Existing single-user databases are migrated automatically (their data
 | Agents | deterministic | deterministic, plus LLM planning, extraction, adjudication, insights and prose when `OPENROUTER_API_KEY` is set |
 | Labels | every source, reference and export says SYNTHETIC | live / cached / uploaded origin shown per source |
 
-The demo corpus deliberately includes contradictions (e.g. 38% vs 72% agent adoption), a vendor press release
-reprinted by a news site, an outdated 2019 forecast, opinion pieces, conflict-of-interest material and a
-prompt-injection attempt, so every analysis feature has something to find. Try *"How will agentic AI transform
-enterprise software over the next five years?"* or *"What evidence supports or contradicts the claim that AI agents
-will replace traditional SaaS workflows?"*
+The demo corpus only covers AI and enterprise software, so **demo mode is limited to three preselected questions**
+(`DEMO_QUESTIONS` in `src/models/research.py`), for guests and signed-in users alike; the research service rejects
+any other demo question, because it would retrieve unrelated sources and produce a misleading report:
+
+1. *How will agentic AI transform enterprise software over the next five years?*
+2. *Which emerging technologies could create new business opportunities in India?*
+3. *What evidence supports or contradicts the claim that AI agents will replace traditional SaaS workflows?*
+
+The corpus deliberately includes contradictions (e.g. 38% vs 72% agent adoption), a vendor press release reprinted by
+a news site, an outdated 2019 forecast, opinion pieces, conflict-of-interest material and a prompt-injection attempt,
+so every analysis feature has something to find. Live research (signed in) accepts any question.
 
 ## Configuration
 
@@ -89,20 +109,27 @@ sources and your uploads, and says so in the run log.
 
 ## The pages
 
-1. **Research Workspace**: question, context, objectives, depth, source types, date range, follow-up rounds, mode, document uploads, recent runs.
-2. **Research Progress**: live orchestrator events (current agent and subquestion, searches, sources, claims, round), then the stored audit trail, search log, budget usage and stopping decision.
-3. **Evidence Explorer**: filterable sources with provenance, assessments, flags, passages, claims and duplicate links.
-4. **Critical Analysis**: evidence matrix, contradictions side by side, agreement vs uncertainty, gaps, coverage, quality flags.
-5. **Insights & Hypotheses**: findings, trends, hypotheses, risks and opportunities, each labelled observed/inferred/speculative, with confidence, alternatives, limitations and evidence.
-6. **Research Report**: 12-section cited report, citation-traceability table, Markdown/HTML/PDF export, follow-up Q&A, "Refine investigation".
-7. **Research History**: reopen or delete persisted runs.
-8. **Settings**: model, providers, defaults and limits, masked key status, cache and document management.
+The interface follows the "Synthora" wireframe: violet accent, white cards, DM Sans / Manrope, a sidebar with
+**New research**, recent research and the profile/sign-in block.
+
+1. **Welcome**: hero, "Try Demo" (opens the workspace in demo mode), Google sign-in, how an investigation works.
+2. **Research workspace**: Live/Demo switch (guests: demo only); demo shows the three question cards, live shows a
+   free-text question with suggestions; depth cards (Quick/Standard/Deep); advanced settings (context, objectives,
+   follow-up rounds, source types, dates, LLM, documents); recent investigations.
+3. **Agents in action**: live agent list with status, activity timeline and progress bar while a run executes; for a
+   past run, the per-agent audit trail, budget usage, stopping decision, full event log and search activity.
+4. **Research results**: one investigation in tabs: *Overview* (executive summary, key findings, at a glance),
+   *Evidence* (filterable sources, assessments, passages, claims), *Analysis* (evidence matrix, contradictions,
+   agreement vs uncertainty, gaps, coverage), *Insights* (observed / inferred / speculative), *Charts* (extracted values and provenance), *Full report* (cited
+   report + citation traceability) and *Ask* (follow-up Q&A). Export (Markdown/HTML/PDF) and Refine in the header.
+5. **Research library**: search, sort and status filters; open or delete runs; *My activity*; *Delete my data*.
+6. **Settings**: capabilities, personal defaults and documents; admin-only models, providers, cache and usage.
 
 ## How it works (summary)
 
 ```
 START → Planner → Retriever → Source Evaluation → Critical Analysis → Gap & Follow-up ─┬─ follow_up → Retriever (loop, bounded)
-                                                                                      └─ synthesize → Insights → Report → END
+                                                                                      └─ synthesize → Insights → Data Visualization → Report → END
 ```
 
 The follow-up decision is deterministic. Research stops at the iteration limit, when the search, source or time
@@ -113,12 +140,13 @@ budget is exhausted, when no gap is worth pursuing, or when a round finds no new
 
 ```
 app.py                     entry point, navigation, home
-pages/                     8 Streamlit pages
+app_pages/                 Streamlit pages (workspace, agents in action, results, library, settings);
+                           not named `pages/` so Streamlit never falls back to legacy auto-navigation
 src/config.py              settings from .env (secrets masked)
 src/models/                research, evidence and run models (Pydantic)
 src/orchestration/         LangGraph graph, typed state, budget tracker
 src/agents/                planner, retriever, source_evaluator, critical_analyst, gap_analyst,
-                           insight_generator, report_builder, qa
+                           insight_generator, data_visualizer, report_builder, qa
 src/search/                provider interface, Tavily/OpenAlex/Crossref/arXiv, demo & upload providers, HTTP safety
 src/ingestion/             document extraction and chunking
 src/evidence/              evidence store (dedup, syndication) and citations
@@ -127,7 +155,7 @@ src/retrieval/             BM25
 src/reporting/             Markdown/HTML/PDF rendering
 src/database/              SQLite schema and repository
 src/services/              research service, LLM client
-src/ui/                    shared UI state, components, charts
+src/ui/                    shared UI state, components (CSS skin), charts; views/ = results tabs
 data/sample_research/      synthetic demo corpus
 tests/                     pytest suite (mocked providers, fake LLM, network blocked)
 docs/architecture.md
@@ -135,7 +163,7 @@ docs/architecture.md
 
 ## Testing
 
-`pytest` runs 106 tests offline. An autouse fixture **fails any test that touches the network**; providers use
+`pytest` runs the offline suite (153 tests at this upgrade; use `pytest --collect-only` for the current count). An autouse fixture **fails any test that touches the network**; providers use
 `httpx.MockTransport`, and the LLM is a fake OpenAI client. The tests cover question validation, plan
 generation and schema, provider parsing (Tavily, OpenAlex, Crossref, arXiv), retries and rate limits, SSRF
 blocking, document extraction, normalisation and dedup, syndication, claims and verbatim-quote validation, the
@@ -151,8 +179,8 @@ Q&A citation validation, and prompt-injection handling.
 - Academic results are usually abstracts only. This is shown per source and in the report.
 - Retrieval is keyword-based (BM25); paraphrased questions may retrieve less well than with embeddings.
 - Full-text fetching is limited to 6 pages per round and skips non-HTML content.
-- Scanned PDFs need OCR (not included). Model costs are tracked as calls and tokens, not money.
-- Single local user; no authentication.
+- Scanned PDFs need OCR (not included). Model cost estimates require configured input/output prices; they are not billing invoices.
+- Public deployments require configured Google sign-in; explicit local mode uses one shared local administrator.
 
 ## Troubleshooting
 
@@ -165,4 +193,40 @@ Q&A citation validation, and prompt-injection handling.
 ## Recommended next steps
 
 Hybrid BM25 plus embedding retrieval, LLM-assisted source evaluation with calibration studies, OCR, more providers
-(Semantic Scholar, news APIs), scheduled re-runs to track how evidence changes, and cost estimation per model.
+(Semantic Scholar, news APIs), scheduled re-runs to track how evidence changes, and automatic price lookup per model.
+
+## Evidence-backed charts and claim integrity
+
+The **Data Visualization Agent** is the eighth pipeline agent. The **Charts** tab shows numeric series from uploaded CSV rows, with exact values, units, source IDs, passage IDs, row locations and quotations. Download the underlying CSV to audit a chart. The cited report and Markdown/HTML/PDF exports include the numeric evidence as text, not embedded chart images.
+
+Use a CSV such as `year,revenue (USD)` followed by rows containing actual extracted figures. Each chart uses one source and one compatible unit. Duplicate labels, conflicting units, nonfinite values and out-of-range percentages are rejected. Missing cells are omitted, never filled with zeros. Only simple year labels produce line charts; other categories use bars. Existing CSV uploads need to be uploaded again to retain structured row metadata. Web/PDF tables are not automatically converted into series yet. A narrative percentage can appear as a single indicator with its full quotation; percentages from unrelated sources are not combined. Synthetic demo figures remain labelled fictional.
+
+The **Critical Analysis Agent** rejects model paraphrases that introduce numbers or units, change explicit negation, or remove forecast/uncertainty wording. Accepted claims retain the source quotation as their canonical text, with source-derived type and polarity. These checks improve quotation integrity; they do not prove that a source's claim is true or establish full semantic entailment.
+
+## Budget accounting
+
+Every actual LLM request, including a retry, consumes the per-run call allowance. Token reservations are atomic across parallel claim extraction calls. Before a request, a conservative allowance based on prompt UTF-8 bytes, response limit and framing is reserved. Provider-reported usage replaces that allowance on success; failed requests and responses without usage retain an explicitly **unreported** allowance because their billing is unknown. Conservative reservations can stop a run before the nominal token limit. The progress page separates observed, unreported and in-flight tokens.
+
+Set `LLM_INPUT_USD_PER_MILLION` and `LLM_OUTPUT_USD_PER_MILLION` to the selected model's rates to enable a USD estimate. Update these when changing models; zero means unknown, not free. Estimates are partial if usage is missing. LLM request timeouts and retry waits use the remaining run time. Already-running search/fetch requests have their own HTTP timeout, so the run time budget is not a hard cancellation of all network work. No per-user quotas or global concurrency limits have been added.
+
+## CI and deployment verification
+
+[Deployment guide and verification checklist](docs/deployment.md) separates health checks from the authenticated workflow. A public URL and test account are needed to verify the actual hosted app; local tests cannot establish deployment readiness.
+
+GitHub Actions installs the tested dependency constraints, checks dependency consistency, runs Ruff correctness checks, runs the offline tests and scans the working tree plus reachable Git history for credential candidates. Run the same checks locally:
+
+```bash
+python -m pip install -r requirements.txt -c constraints.txt
+python -m pip check
+ruff check .
+pytest
+python scripts/scan_secrets.py
+```
+
+The constraints snapshot records the development environment's package versions; CI must confirm installation on its own runner. Ruff deliberately checks syntax, undefined names and control-flow errors; it does not claim every style issue is resolved.
+
+## Configurable LangSmith observability
+
+Use `LANGSMITH_TRACING` as the master switch and `APP_API_TRACING` to control detailed request spans. Restart Streamlit after changes. Graph agents, OpenRouter calls and search/HTTP spans have been observed in the user's local APAC traces; switch-off, failure-mode and token-total verification remain pending.
+
+See the [LangSmith guide](docs/observability.md) for setup, portal navigation, token counts, privacy and troubleshooting. The earlier 153-test regression result predates the observability integration.

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from src.models.evidence import (AgentEvent, AgentStatus, Claim, Contradiction, EvidenceLink, Insight, MatrixRow,
                                  Passage, Report, ResearchGap, Source, SourceAssessment)
+from src.models.visualization import EvidenceChart
 from src.models.research import BudgetUsage, ResearchPlan, ResearchRequest
 
 
@@ -21,6 +22,7 @@ class RunSummary(BaseModel):
     summary: str = ""
     counts: dict[str, int] = Field(default_factory=dict)
     parent_run_id: str | None = None
+    depth: str = ""
 
 
 class RunBundle(BaseModel):
@@ -39,6 +41,8 @@ class RunBundle(BaseModel):
     contradictions: list[Contradiction] = Field(default_factory=list)
     gaps: list[ResearchGap] = Field(default_factory=list)
     insights: list[Insight] = Field(default_factory=list)
+    charts: list[EvidenceChart] = Field(default_factory=list)
+    visualization_notes: list[str] = Field(default_factory=list)
     report: Report | None = None
     events: list[AgentEvent] = Field(default_factory=list)
     search_log: list[dict[str, Any]] = Field(default_factory=list)

@@ -18,6 +18,7 @@ from src.evidence.store import EvidenceStore
 from src.models.evidence import (Agreement, EpistemicLabel, InsightKind, ORIGIN_LABELS, Report, ReportSection)
 from src.models.research import ResearchMode
 from src.orchestration.state import ResearchState
+from src.services.llm import wrap_untrusted
 
 AGREEMENT_LABEL = {Agreement.STRONG: "strong agreement", Agreement.MODERATE: "moderate agreement",
                    Agreement.SINGLE_SOURCE: "single source", Agreement.MIXED: "mixed evidence",
@@ -231,6 +232,16 @@ class ReportBuilderAgent(Agent):
         add("next_steps", "Recommendations and next steps", next_steps)
         add("limitations", "Limitations and unresolved questions", limitations)
 
+        chart_lines = []
+        for chart in state.get("charts", []):
+            chart_lines.append(f"### {chart.title}" + (" — SYNTHETIC" if chart.synthetic else ""))
+            chart_lines.append(f"Unit: {chart.unit}. {chart.limitation}")
+            for point in chart.points:
+                label = point.label.replace("\n", " ")
+                chart_lines.append(f"- {label}: **{point.value:g} {chart.unit}** "
+                                   f"{cite([point.source_id])} ({point.location})")
+        add("visualizations", "Numeric evidence behind the charts", "\n\n".join(chart_lines)
+            or "No unambiguous numeric dataset was available; no chart values were invented.")
         references = build_references([store.sources[sid] for sid in cite.order])
         add("references", "References", "\n".join(format_reference(r) for r in references) or "_No sources cited._")
 
@@ -242,15 +253,21 @@ class ReportBuilderAgent(Agent):
     def _llm_prose(self, question: str, summary: str, detailed: str, store: EvidenceStore, cite: Citer,
                    ctx: RunContext) -> tuple[str, str] | None:
         valid = set(range(1, len(cite.order) + 1))
-        prompt = (f"Research question: {question}\nRewrite the two draft sections below into clear, balanced prose for a "
+        prompt = ("Research question:\n" + wrap_untrusted("research_question", question)
+                  + "\nRewrite the two draft sections below into clear, balanced prose for a "
                   "decision maker. Keep every citation marker like [3] next to the statement it supports; do not add "
                   "new markers, facts or numbers. Keep disagreements and uncertainty explicit, and keep speculative "
                   "statements labelled as hypotheses. Return {\"executive_summary\": ..., \"detailed_analysis\": ...} "
                   "(markdown allowed; keep the ### subquestion headings in the analysis).\n\n"
-                  f"DRAFT EXECUTIVE SUMMARY:\n{summary}\n\nDRAFT DETAILED ANALYSIS:\n{detailed[:9000]}")
+                  "DRAFT EXECUTIVE SUMMARY:\n" + wrap_untrusted("draft_summary", summary)
+                  + "\n\nDRAFT DETAILED ANALYSIS:\n" + wrap_untrusted("draft_analysis", detailed[:9000]))
         draft = ctx.llm.structured(prompt, ProseDraft, ctx.budget, max_tokens=3000)
         if not draft:
             return None
+        for original, rewritten in ((summary, draft.executive_summary), (detailed[:9000], draft.detailed_analysis)):
+            if set(re.findall(r"\[\d+\]", original)) != set(re.findall(r"\[\d+\]", rewritten)):
+                ctx.event(self.name, "info", "LLM rewrite rejected: citation markers were changed or removed.")
+                return None
         allowed_numbers = _numbers(summary + detailed + " ".join(s.content for s in store.sources.values()))
         new_numbers = {n for n in _numbers(draft.executive_summary + draft.detailed_analysis)
                        if n not in allowed_numbers and not (n.isdigit() and int(n) < 13)}

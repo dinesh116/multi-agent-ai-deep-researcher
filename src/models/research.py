@@ -63,6 +63,19 @@ DEPTH_PRESETS: dict[Depth, dict] = {
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
+# The synthetic demo corpus only covers AI and enterprise software, so demo mode is limited to questions it can
+# answer well. Any other question would retrieve unrelated sources and produce a misleading report.
+DEMO_QUESTIONS = [
+    "How will agentic AI transform enterprise software over the next five years?",
+    "Which emerging technologies could create new business opportunities in India?",
+    "What evidence supports or contradicts the claim that AI agents will replace traditional SaaS workflows?",
+]
+
+
+def is_demo_question(question: str) -> bool:
+    normalized = " ".join(question.split()).casefold()
+    return any(normalized == q.casefold() for q in DEMO_QUESTIONS)
+
 
 class ResearchRequest(BaseModel):
     question: str
@@ -123,7 +136,14 @@ class BudgetUsage(BaseModel):
     searches: int = 0
     sources: int = 0
     llm_calls: int = 0
-    llm_tokens: int = 0
+    llm_tokens: int = 0  # observed total tokens
+    llm_attempts: int = 0  # includes failed requests and retries
+    llm_unreported_tokens: int = 0  # conservative token charge for failed/usage-less attempts
+    llm_reserved_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+    cost_estimate_complete: bool = False
     cache_hits: int = 0
     elapsed_seconds: float = 0.0
     exhausted: list[str] = Field(default_factory=list)  # which limits were hit

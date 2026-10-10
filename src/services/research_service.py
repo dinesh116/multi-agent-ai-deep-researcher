@@ -8,12 +8,13 @@ from datetime import date
 from src.agents.base import RunContext
 from src.config import Settings
 from src.models.evidence import AgentEvent, AgentStatus
-from src.models.research import ResearchMode, ResearchRequest, new_id
+from src.models.research import ResearchMode, ResearchRequest, is_demo_question, new_id
 from src.orchestration.budget import RunBudget
 from src.orchestration.graph import build_graph
 from src.orchestration.state import AGENT_ORDER, ResearchState
 from src.search.registry import ProviderSettings, build_providers
 from src.services.llm import LLMClient
+from src.services.observability import research_trace
 
 logger = logging.getLogger(__name__)
 
@@ -22,11 +23,12 @@ def initial_state(request: ResearchRequest, run_id: str) -> ResearchState:
     return ResearchState(
         run_id=run_id, request=request, budget=request.budget(), plan=None, iteration=0, pending_queries=[],
         searched_queries=[], sources=[], passages=[], assessments={}, claims=[], extracted_source_ids=[], matrix=[],
-        links=[], contradictions=[], gaps=[], insights=[], report=None,
+        links=[], contradictions=[], gaps=[], insights=[], charts=[], visualization_notes=[], report=None,
         statuses={a: AgentStatus(agent=a) for a in AGENT_ORDER}, route="", route_reason="", stop_reason="",
         new_sources_last_iteration=0, provider_notes=[], events=[], search_log=[], warnings=[], errors=[])
 
 
+@research_trace
 def run_research(request: ResearchRequest, settings: Settings, repo=None, on_event: Callable[[AgentEvent], None] | None = None,
                  provider_settings: ProviderSettings | None = None, llm: LLMClient | None = None,
                  uploaded_documents: list[dict] | None = None, today: date | None = None,
@@ -34,6 +36,9 @@ def run_research(request: ResearchRequest, settings: Settings, repo=None, on_eve
     """Execute one investigation. Persists the run (if `repo` is given) and returns the final state."""
     if owner_id.startswith("guest:") and request.mode == ResearchMode.LIVE:
         raise PermissionError("Live research requires signing in. Guests can use demo mode.")
+    if request.mode == ResearchMode.DEMO and not is_demo_question(request.question):
+        raise ValueError("Demo mode only runs the preselected demo questions. Sign in and use live research for "
+                         "your own question.")
     run_id = run_id or new_id("run")
     provider_settings = provider_settings or ProviderSettings()
     documents = uploaded_documents
@@ -71,7 +76,9 @@ def run_research(request: ResearchRequest, settings: Settings, repo=None, on_eve
     graph = build_graph(ctx)
     final: ResearchState = dict(state)
     try:
-        for update in graph.stream(state, stream_mode="updates", config={"recursion_limit": 100}):
+        for update in graph.stream(state, stream_mode="updates", config={"recursion_limit": 100,
+                "run_name": "research-investigation", "tags": ["deep-researcher", request.mode.value],
+                "metadata": {"research_run_id": run_id, "mode": request.mode.value, "depth": request.depth.value}}):
             for node_output in update.values():
                 for key, value in (node_output or {}).items():
                     if key in ("events", "search_log", "warnings", "errors"):

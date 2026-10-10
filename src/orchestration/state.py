@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from src.models.evidence import (AgentEvent, AgentStatus, Claim, Contradiction, EvidenceLink, Insight, MatrixRow,
                                  Passage, Report, ResearchGap, Source, SourceAssessment)
+from src.models.visualization import EvidenceChart
 from src.models.research import BudgetUsage, ResearchBudget, ResearchPlan, ResearchRequest, now
 
 
@@ -52,6 +53,8 @@ class ResearchState(TypedDict, total=False):
     contradictions: list[Contradiction]
     gaps: list[ResearchGap]
     insights: list[Insight]
+    charts: list[EvidenceChart]
+    visualization_notes: list[str]
     report: Report | None
     statuses: dict[str, AgentStatus]
     usage: BudgetUsage
@@ -67,4 +70,4 @@ class ResearchState(TypedDict, total=False):
 
 
 AGENT_ORDER = ["planner", "retriever", "source_evaluator", "critical_analyst", "gap_analyst", "insight_generator",
-               "report_builder"]
+               "data_visualizer", "report_builder"]

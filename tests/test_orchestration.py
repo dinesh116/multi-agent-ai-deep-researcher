@@ -148,6 +148,8 @@ def test_llm_retries_transient_errors(settings):
     budget = RunBudget(ResearchBudget())
     assert llm.complete("hi", budget) == '{"ok": true}' and len(sleeps) == 2
     assert budget.usage.llm_calls == 1 and budget.usage.llm_tokens == 123
+    assert budget.usage.llm_attempts == 3 and budget.usage.llm_unreported_tokens > 0
+    assert budget.usage.llm_reserved_tokens == 0
 
 
 def test_llm_non_transient_error_and_budget(settings):

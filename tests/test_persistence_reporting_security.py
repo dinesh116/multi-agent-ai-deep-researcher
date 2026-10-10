@@ -78,7 +78,7 @@ def test_report_structure_and_citations(stored_run):
     report = bundle.report
     keys = [s.key for s in report.sections]
     assert keys == ["scope", "executive_summary", "key_findings", "detailed_analysis", "evidence", "trends",
-                    "implications", "risks", "next_steps", "limitations", "references"]
+                    "implications", "risks", "next_steps", "limitations", "visualizations", "references"]
     assert report.references and all(r["synthetic"] for r in report.references)
     assert report.citation_checks and all(c.valid for c in report.citation_checks)
     assert "synthetic demo data" in report.section("limitations").content
@@ -154,10 +154,9 @@ def test_prompt_injection_in_sources_is_contained(stored_run):
     assert any("instruction-like" in l for l in source.limitations)
 
 
-def test_injection_source_flagged_in_payments_question(settings, repo):
-    from src.models.research import ResearchRequest
-    state = run_research(ResearchRequest(question="How are major payment companies adopting generative AI for fraud?"),
-                         settings, repo=repo, today=TODAY)
+def test_injection_source_flagged_in_demo_question(settings, repo):
+    from src.models.research import DEMO_QUESTIONS, ResearchRequest
+    state = run_research(ResearchRequest(question=DEMO_QUESTIONS[1]), settings, repo=repo, today=TODAY)
     injected = [s for s in state["sources"] if "Ignore all previous" in s.content]
     assert injected
     assert "prompt_injection_attempt" in state["assessments"][injected[0].id].flags

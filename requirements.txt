@@ -1,6 +1,7 @@
 # Runtime (mirrors pyproject.toml). Install: pip install -r requirements.txt
 streamlit>=1.40
 langgraph>=1.0
+langsmith>=0.14.7
 openai>=1.50
 pydantic>=2.9
 pandas>=2.2

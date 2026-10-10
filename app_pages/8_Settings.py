@@ -9,7 +9,7 @@ import streamlit as st
 
 from src.config import get_settings, mask_secret
 from src.models.research import DEPTH_PRESETS, Depth
-from src.ui.components import page_header
+from src.ui.components import card, html, page_header
 from src.ui.state import auth_enabled, current_user, effective_settings, get_repo, preference, provider_settings
 
 repo, user = get_repo(), current_user()
@@ -17,6 +17,19 @@ env = get_settings()
 settings = effective_settings()
 page_header("Configuration", "Settings", "Your preferences and documents" + (", plus app-wide models, providers and "
             "usage (admin)." if user.is_admin else "."))
+
+with card("caps"):
+    html('<div class="ds-label">Capabilities</div>')
+
+    def cap(label: str, on: bool, value: str) -> str:
+        dot = "#41bb94" if on else "#c9cad6"
+        return (f'<div class="ds-stat"><span><span style="color:{dot}">●</span> {label}</span><b>{value}</b></div>')
+    html(cap("LLM", settings.llm_configured, settings.openrouter_model if settings.llm_configured else "not configured")
+         + cap("Web search", settings.web_search_configured,
+               "Tavily" if settings.web_search_configured else "not configured")
+         + cap("Academic", True, "OpenAlex · Crossref · arXiv") + cap("Demo dataset", True, "offline · synthetic")
+         + cap("Storage", True, repo.storage_description))
+st.write("")
 
 if user.is_guest:
     st.info("Sign in to save personal preferences and upload documents.", icon=":material/info:")

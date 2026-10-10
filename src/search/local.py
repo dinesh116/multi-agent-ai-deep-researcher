@@ -76,6 +76,8 @@ class UploadedDocumentProvider:
                 title=doc["title"], provider="upload", doc_ref=doc["id"], snippet=doc["sections"][0][1][:400],
                 content="\n\n".join(t for _, t in doc["sections"]), full_text_available=True,
                 publisher=f"Uploaded file: {doc['filename']}", source_type="dataset" if doc["kind"] == "csv" else "user_document",
-                score=score, sections=list(doc["sections"]), metadata={"filename": doc["filename"], "kind": doc["kind"]},
+                score=score, sections=list(doc["sections"]), metadata={"filename": doc["filename"], "kind": doc["kind"],
+                    "table_columns": doc.get("metadata", {}).get("columns", []),
+                    "table_records": doc.get("metadata", {}).get("records", [])},
                 limitations=["User-provided document: provenance and accuracy not independently checked."]))
         return results
