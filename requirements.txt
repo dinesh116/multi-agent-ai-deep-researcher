@@ -1,0 +1,15 @@
+# Runtime (mirrors pyproject.toml). Install: pip install -r requirements.txt
+streamlit>=1.40
+langgraph>=1.0
+openai>=1.50
+pydantic>=2.9
+pandas>=2.2
+httpx>=0.27
+trafilatura>=2.0
+pymupdf>=1.25
+plotly>=5.24
+python-dotenv>=1.0
+markdown>=3.6
+# Development
+pytest>=8.3
+watchdog>=4.0

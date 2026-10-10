@@ -1,0 +1,20 @@
+# Secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Application data (research runs, caches, uploads): never commit
+data/*.db
+data/*.db-*
+data/uploads/
+data/exports/
+data/vector_store/
+logs/
+*.log
+
+.DS_Store

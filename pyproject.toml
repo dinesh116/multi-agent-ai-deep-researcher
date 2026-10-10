@@ -1,0 +1,31 @@
+[project]
+name = "deep-researcher-ai"
+version = "0.1.0"
+description = "Deep Researcher AI: multi-agent, multi-hop research with LangGraph, evidence tracking and cited reports."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "streamlit>=1.40",
+    "langgraph>=1.0",
+    "openai>=1.50",
+    "pydantic>=2.9",
+    "pandas>=2.2",
+    "httpx>=0.27",
+    "trafilatura>=2.0",
+    "pymupdf>=1.25",
+    "plotly>=5.24",
+    "python-dotenv>=1.0",
+    "markdown>=3.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "watchdog>=4.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore:builtin type .* has no __module__ attribute:DeprecationWarning"]
+
+[tool.setuptools.packages.find]
+include = ["src*"]
