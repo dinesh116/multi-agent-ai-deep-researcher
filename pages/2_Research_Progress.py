@@ -10,15 +10,15 @@ from src.models.evidence import AgentEvent
 from src.models.research import ResearchRequest, new_id
 from src.orchestration.state import AGENT_ORDER
 from src.services.research_service import run_research
-from src.ui.components import AGENT_TITLES, STATUS_ICON, demo_banner
+from src.ui.components import AGENT_TITLES, STATUS_ICON, demo_banner, page_header
 from src.ui.state import effective_settings, get_repo, load_selected_run, provider_settings, select_run
 
 repo = get_repo()
-st.title("📡 Research Progress")
+page_header("Orchestration", "Research Progress", "Live workflow events from the LangGraph orchestrator, and the audit trail of each run.")
 
 
 def stage_table(statuses: dict[str, str], current: str | None) -> pd.DataFrame:
-    return pd.DataFrame([{"": STATUS_ICON.get(statuses.get(a, "pending"), "⚪"), "Agent": AGENT_TITLES[a],
+    return pd.DataFrame([{"": STATUS_ICON.get(statuses.get(a, "pending"), "○"), "Agent": AGENT_TITLES[a],
                           "Status": ("running" if a == current and statuses.get(a) != "completed" else statuses.get(a, "pending"))}
                          for a in AGENT_ORDER])
 
@@ -99,9 +99,9 @@ if pending:
                    f"{len(state['contradictions'])} contradiction(s), {len(state['insights'])} insights. "
                    f"Stopped because: {state.get('stop_reason') or 'workflow finished'}")
         c = st.columns(3)
-        c[0].page_link("pages/6_Research_Report.py", label="Read the report", icon="📝")
-        c[1].page_link("pages/3_Evidence_Explorer.py", label="Explore the evidence", icon="📚")
-        c[2].page_link("pages/4_Critical_Analysis.py", label="See the critical analysis", icon="⚖️")
+        c[0].page_link("pages/6_Research_Report.py", label="Read the report", icon=":material/description:")
+        c[1].page_link("pages/3_Evidence_Explorer.py", label="Explore the evidence", icon=":material/library_books:")
+        c[2].page_link("pages/4_Critical_Analysis.py", label="See the critical analysis", icon=":material/balance:")
     else:
         status_box.update(label="Research failed", state="error")
         st.error(outcome.get("error") or "The workflow finished without a report. See errors below.")
@@ -114,8 +114,8 @@ if pending:
 # ------------------------------------------------------------------------------ audit trail of the selected run
 bundle = load_selected_run()
 if bundle is None:
-    st.info("No investigation is running. Start one in the Research Workspace.", icon="📡")
-    st.page_link("pages/1_Research_Workspace.py", label="Go to Research Workspace", icon="🚀")
+    st.info("No investigation is running. Start one in the Research Workspace.", icon=":material/info:")
+    st.page_link("pages/1_Research_Workspace.py", label="Go to Research Workspace", icon=":material/arrow_forward:")
     st.stop()
 
 st.markdown(f"**Investigation:** {bundle.summary.question}")
@@ -141,7 +141,7 @@ for note in bundle.provider_notes:
 left, right = st.columns([1.3, 2.7])
 with left:
     st.subheader("Agents")
-    st.dataframe(pd.DataFrame([{"": STATUS_ICON.get(s.status, "⚪"), "Agent": AGENT_TITLES.get(a, a), "Runs": s.runs,
+    st.dataframe(pd.DataFrame([{"": STATUS_ICON.get(s.status, "○"), "Agent": AGENT_TITLES.get(a, a), "Runs": s.runs,
                                 "Time (ms)": s.duration_ms} for a, s in bundle.statuses.items()]),
                  hide_index=True, width="stretch")
     open_gaps = [g for g in bundle.gaps if g.expected_value >= 0.35]

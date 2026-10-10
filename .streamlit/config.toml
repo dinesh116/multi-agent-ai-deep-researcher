@@ -1,6 +1,64 @@
+# Theme inspired by the Composio docs look: near-white / near-black surfaces, hairline borders,
+# square corners, a deep-blue accent, a neo-grotesk sans and JetBrains Mono for labels.
+# ABC Diatype (Composio's font) is commercially licensed, so Geist (OFL) is used as the sans-serif.
+
 [theme]
-primaryColor = "#6366f1"
-base = "light"
+font = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap, sans-serif"
+headingFont = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap, sans-serif"
+codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap, monospace"
+baseFontSize = 15
+headingFontWeights = [500, 500, 500, 500, 500, 500]
+headingFontSizes = ["2.4rem", "1.55rem", "1.2rem", "1.05rem", "1rem", "0.95rem"]
+metricValueFontWeight = 500
+baseRadius = "none"
+buttonRadius = "none"
+showWidgetBorder = true
+showSidebarBorder = true
+linkUnderline = false
+
+[theme.light]
+primaryColor = "#0007cd"
+backgroundColor = "#fbfbfb"
+secondaryBackgroundColor = "#f3f3f3"
+textColor = "#0f0f0f"
+borderColor = "#e5e5e5"
+dataframeBorderColor = "#e5e5e5"
+dataframeHeaderBackgroundColor = "#f3f3f3"
+linkColor = "#0007cd"
+codeBackgroundColor = "#f3f3f3"
+blueColor = "#0007cd"
+greenColor = "#009588"
+orangeColor = "#f05100"
+yellowColor = "#fcbb00"
+redColor = "#dc2626"
+chartCategoricalColors = ["#0007cd", "#009588", "#f05100", "#fcbb00", "#104e64", "#f99c00", "#585858"]
+
+[theme.light.sidebar]
+backgroundColor = "#fbfbfb"
+secondaryBackgroundColor = "#f3f3f3"
+borderColor = "#e5e5e5"
+
+[theme.dark]
+primaryColor = "#5b8bf0"
+backgroundColor = "#0f0f0f"
+secondaryBackgroundColor = "#1c1c1c"
+textColor = "#fbfbfb"
+borderColor = "#262626"
+dataframeBorderColor = "#262626"
+dataframeHeaderBackgroundColor = "#1a1a1a"
+linkColor = "#5b8bf0"
+codeBackgroundColor = "#1a1a1a"
+blueColor = "#5b8bf0"
+greenColor = "#00bb7f"
+orangeColor = "#f99c00"
+yellowColor = "#fcbb00"
+redColor = "#ef4444"
+chartCategoricalColors = ["#5b8bf0", "#00bb7f", "#f99c00", "#ac4bff", "#ff2357", "#1447e6", "#b4b4b4"]
+
+[theme.dark.sidebar]
+backgroundColor = "#0f0f0f"
+secondaryBackgroundColor = "#1a1a1a"
+borderColor = "#262626"
 
 [server]
 maxUploadSize = 15

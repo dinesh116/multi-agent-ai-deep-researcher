@@ -2,16 +2,16 @@
 import pandas as pd
 import streamlit as st
 
+from src.ui.components import page_header
 from src.ui.state import get_repo, select_run, selected_run_id
 
 repo = get_repo()
-st.title("🗂️ Research History")
-st.caption("Completed investigations are stored locally and can be reopened without repeating the research.")
+page_header("Library", "Research History", "Completed investigations are stored locally and can be reopened without repeating the research.")
 
 runs = repo.list_runs(limit=200)
 if not runs:
-    st.info("No research runs yet.", icon="📭")
-    st.page_link("pages/1_Research_Workspace.py", label="Start an investigation", icon="🚀")
+    st.info("No research runs yet.", icon=":material/info:")
+    st.page_link("pages/1_Research_Workspace.py", label="Start an investigation", icon=":material/arrow_forward:")
     st.stop()
 
 status_filter = st.segmented_control("Status", ["all", "completed", "failed", "running"], default="all") or "all"
@@ -29,9 +29,9 @@ current = selected_run_id()
 for run in runs:
     with st.container(border=True):
         top, buttons = st.columns([5, 1.6])
-        marker = "🔹 " if run.id == current else ""
+        marker = "● " if run.id == current else ""
         top.markdown(f"{marker}**{run.question}**")
-        top.caption(f"{run.created_at:%d %b %Y %H:%M} · {run.status} · {'🧪 demo' if run.mode == 'demo' else '🌐 live'} · "
+        top.caption(f"{run.created_at:%d %b %Y %H:%M} · {run.status} · {'demo' if run.mode == 'demo' else 'live'} · "
                     f"{run.counts.get('sources', 0)} sources · {run.counts.get('insights', 0)} insights")
         if run.summary:
             with top.expander("Summary of findings"):
@@ -40,7 +40,7 @@ for run in runs:
         if b1.button("Open", key=f"open_{run.id}", disabled=run.status == "running"):
             select_run(run.id)
             st.switch_page("pages/6_Research_Report.py")
-        with b2.popover("🗑️"):
+        with b2.popover("Delete", icon=":material/delete:"):
             st.write("Delete this run and all of its stored sources, evidence, report and Q&A?")
             if st.button("Delete", key=f"del_{run.id}", type="primary"):
                 repo.delete_run(run.id)

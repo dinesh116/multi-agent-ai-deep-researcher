@@ -4,12 +4,13 @@ import streamlit as st
 
 from src.config import get_settings, mask_secret
 from src.models.research import DEPTH_PRESETS, Depth
+from src.ui.components import page_header
 from src.ui.state import effective_settings, get_repo, preference, provider_settings
 
 repo = get_repo()
 env = get_settings()
 settings = effective_settings()
-st.title("⚙️ Settings")
+page_header("Configuration", "Settings", "Model, search providers, research limits and local data.")
 
 st.subheader("API keys (read from .env)")
 st.dataframe(pd.DataFrame([

@@ -3,12 +3,11 @@ import streamlit as st
 
 from src.models.evidence import ORIGIN_LABELS
 from src.ui import charts
-from src.ui.components import demo_banner, flags_html, link_for, origin_badge, source_header
+from src.ui.components import demo_banner, flags_html, link_for, origin_badge, page_header, source_header
 from src.ui.state import require_run
 
 bundle = require_run()
-st.title("📚 Evidence Explorer")
-st.caption(bundle.summary.question)
+page_header("Evidence", "Evidence Explorer", bundle.summary.question)
 demo_banner(bundle.summary.mode)
 
 ref_numbers = {r["source_id"]: r["n"] for r in (bundle.report.references if bundle.report else [])}
@@ -87,10 +86,10 @@ for source in sorted(sources, key=keyfn):
             if a.authority_indicators:
                 st.caption("Authority indicators: " + "; ".join(a.authority_indicators))
             for limitation in a.limitations:
-                st.caption(f"⚠️ {limitation}")
+                st.caption(f"Limitation: {limitation}")
         if source.related_ids:
             related = [bundle.source(r) for r in source.related_ids]
-            st.info("Related / duplicated content: " + "; ".join(r.title for r in related if r), icon="🔗")
+            st.info("Related / duplicated content: " + "; ".join(r.title for r in related if r), icon=":material/link:")
         if source.references_found:
             st.caption("References found inside: " + ", ".join(source.references_found[:6]))
         if not source.full_text_available:

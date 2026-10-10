@@ -1,12 +1,11 @@
 """Page 5: Insights & Hypotheses, each labelled observed / inferred / speculative."""
 import streamlit as st
 
-from src.ui.components import demo_banner, label_badge
+from src.ui.components import demo_banner, label_badge, page_header
 from src.ui.state import require_run
 
 bundle = require_run()
-st.title("💡 Insights & Hypotheses")
-st.caption(bundle.summary.question)
+page_header("Synthesis", "Insights & Hypotheses", bundle.summary.question)
 demo_banner(bundle.summary.mode)
 st.markdown(label_badge("observed") + " stated directly by sources &nbsp; " + label_badge("inferred") +
             " reasoned from several observations &nbsp; " + label_badge("speculative") + " a hypothesis to test, "
@@ -19,7 +18,7 @@ GROUPS = [("Key findings", {"finding"}), ("Disagreements", {"disagreement"}), ("
           ("Risks", {"risk"})]
 
 if not bundle.insights:
-    st.info("No insights were generated. The evidence may have been too thin.", icon="🫙")
+    st.info("No insights were generated. The evidence may have been too thin.", icon=":material/info:")
 counts = {label: sum(i.label.value == label for i in bundle.insights) for label in ("observed", "inferred", "speculative")}
 c = st.columns(3)
 for col, (label, n) in zip(c, counts.items()):
@@ -34,7 +33,7 @@ for title, kinds in GROUPS:
         with st.container(border=True):
             st.markdown(f"{label_badge(insight.label.value)} **{insight.statement}**", unsafe_allow_html=True)
             if insight.label.value == "speculative":
-                st.caption("⚠️ Speculative: a plausible hypothesis, not a conclusion supported as fact.")
+                st.caption("Speculative: a plausible hypothesis, not a conclusion supported as fact.")
             st.markdown(f"**Confidence: {insight.confidence}**: {insight.confidence_explanation}")
             st.markdown(f"**Reasoning:** {insight.reasoning}")
             if insight.alternatives:

@@ -7,11 +7,11 @@ from pydantic import ValidationError
 
 from src.ingestion.extract import ALLOWED_UPLOADS, ExtractionError, extract_upload
 from src.models.research import DEPTH_PRESETS, Depth, ResearchMode, ResearchRequest, SourcePreference
+from src.ui.components import page_header
 from src.ui.state import effective_settings, get_repo, preference, select_run
 
 repo, settings = get_repo(), effective_settings()
-st.title("🚀 Research Workspace")
-st.caption("Ask a complex question. Sensible defaults are set, so you can just type and run.")
+page_header("Research", "Research Workspace", "Ask a complex question. Sensible defaults are set, so you can just type and run.")
 
 EXAMPLES = [
     "How will agentic AI transform enterprise software over the next five years?",
@@ -27,9 +27,9 @@ if draft:
     st.session_state["q_text"] = draft["question"]
     st.session_state["q_context"] = draft["context"]
     st.session_state["parent_run_id"] = draft["parent_run_id"]
-    st.info("Refining a previous investigation: its findings are included as background context.", icon="🔁")
+    st.info("Refining a previous investigation: its findings are included as background context.", icon=":material/replay:")
 
-with st.expander("💡 Example questions", expanded=not st.session_state.get("q_text")):
+with st.expander("Example questions", expanded=not st.session_state.get("q_text")):
     cols = st.columns(2)
     for i, example in enumerate(EXAMPLES):
         if cols[i % 2].button(example, key=f"ex_{i}", width="stretch"):
@@ -46,7 +46,7 @@ with st.expander("Background context and objectives (optional)"):
 c1, c2, c3 = st.columns([2, 2, 1.4])
 depth_options = [d.value for d in Depth]
 depth = c1.segmented_control("Investigation depth", depth_options, default=preference("depth"),
-                             format_func=lambda d: {"quick": "⚡ Quick", "standard": "🔎 Standard", "deep": "🔬 Deep"}[d],
+                             format_func=lambda d: {"quick": "Quick", "standard": "Standard", "deep": "Deep"}[d],
                              key="q_depth") or "standard"
 preset = DEPTH_PRESETS[Depth(depth)]
 c1.caption(f"{preset['subquestions']} subquestions · up to {preset['budget'].max_searches} searches · "
@@ -54,7 +54,7 @@ c1.caption(f"{preset['subquestions']} subquestions · up to {preset['budget'].ma
 max_iter = c2.slider("Maximum follow-up rounds", 1, 6, value=int(preference("max_iterations")), key="q_iter",
                      help="Bounded research loop: the orchestrator may stop earlier if evidence is sufficient.")
 mode = c3.radio("Mode", [m.value for m in ResearchMode], index=0 if preference("mode") == "demo" else 1,
-                format_func=lambda m: "🧪 Demo (offline, synthetic)" if m == "demo" else "🌐 Live research",
+                format_func=lambda m: "Demo (offline, synthetic)" if m == "demo" else "Live research",
                 key="q_mode")
 
 pref_labels = {SourcePreference.WEB: "Web", SourcePreference.ACADEMIC: "Academic papers", SourcePreference.NEWS: "News",
@@ -75,15 +75,15 @@ if mode == ResearchMode.LIVE.value:
     if not settings.llm_configured:
         notes.append("No `OPENROUTER_API_KEY`: agents use deterministic logic (no LLM planning or synthesis).")
     for note in notes:
-        st.caption(f"ℹ️ {note}")
+        st.caption(note)
     use_llm = st.toggle("Use LLM for planning, extraction and synthesis", value=settings.llm_configured,
                         disabled=not settings.llm_configured, key="q_llm")
 else:
     use_llm = False
-    st.caption("🧪 Demo mode searches a bundled SYNTHETIC corpus offline with deterministic agents. Nothing is sent "
+    st.caption("Demo mode searches a bundled SYNTHETIC corpus offline with deterministic agents. Nothing is sent "
                "over the network.")
 
-with st.expander("📎 Your documents (PDF, TXT, Markdown, CSV)"):
+with st.expander("Your documents (PDF, TXT, Markdown, CSV)"):
     uploads = st.file_uploader("Add documents to the research corpus", type=[e.lstrip(".") for e in ALLOWED_UPLOADS],
                                accept_multiple_files=True, key=f"uploader_{st.session_state.get('up_round', 0)}")
     if uploads and st.button("Add uploaded files"):
@@ -102,7 +102,7 @@ with st.expander("📎 Your documents (PDF, TXT, Markdown, CSV)"):
                                    format_func=lambda i: next(f"{d['title'][:60]} ({d['filename']})" for d in library
                                                               if d["id"] == i), key="q_docs")
 
-if st.button("🔬 Run research", type="primary", width="stretch"):
+if st.button("Run research", icon=":material/play_arrow:", type="primary", width="stretch"):
     try:
         request = ResearchRequest(
             question=question or "", context=context, depth=Depth(depth), max_iterations=max_iter, mode=ResearchMode(mode),
@@ -126,7 +126,7 @@ for run in runs:
     with st.container(border=True):
         left, right = st.columns([5, 1])
         left.markdown(f"**{run.question}**")
-        left.caption(f"{run.created_at:%d %b %Y %H:%M} · {'🧪 demo' if run.mode == 'demo' else '🌐 live'} · {run.status} · "
+        left.caption(f"{run.created_at:%d %b %Y %H:%M} · {'demo' if run.mode == 'demo' else 'live'} · {run.status} · "
                      f"{run.counts.get('sources', 0)} sources · {run.counts.get('claims', 0)} claims")
         if right.button("Open", key=f"open_{run.id}", disabled=run.status == "running"):
             select_run(run.id)

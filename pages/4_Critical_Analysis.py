@@ -3,12 +3,11 @@ import pandas as pd
 import streamlit as st
 
 from src.ui import charts
-from src.ui.components import AGREEMENT_COLORS, demo_banner
+from src.ui.components import AGREEMENT_COLORS, demo_banner, page_header
 from src.ui.state import require_run
 
 bundle = require_run()
-st.title("⚖️ Critical Analysis")
-st.caption(bundle.summary.question)
+page_header("Analysis", "Critical Analysis", bundle.summary.question)
 demo_banner(bundle.summary.mode)
 
 ref = {r["source_id"]: r["n"] for r in (bundle.report.references if bundle.report else [])}
@@ -40,7 +39,7 @@ with right:
         st.caption("No sources were flagged.")
 st.caption("Agreement counts independent sources only. A news story that repeats a press release counts once.")
 
-st.subheader("⚔️ Contradictions and competing interpretations")
+st.subheader("Contradictions and competing interpretations")
 if not bundle.contradictions:
     st.caption("No contradictions were detected between independent sources.")
 for con in bundle.contradictions:
@@ -55,7 +54,7 @@ for con in bundle.contradictions:
         c2.markdown(f"> {b.quote}\n\n**{cite([b.source_id])}** {sb.title if sb else ''} · {b.claim_type.value}")
         st.caption(con.explanation)
 
-st.subheader("🧮 Evidence matrix")
+st.subheader("Evidence matrix")
 f1, f2 = st.columns(2)
 agreements = sorted({r.agreement.value for r in bundle.matrix})
 chosen = f1.multiselect("Agreement", agreements, default=agreements)
@@ -73,20 +72,20 @@ strong = [r for r in bundle.matrix if r.agreement.value in ("strong", "moderate"
 uncertain = [r for r in bundle.matrix if r.agreement.value in ("contested", "mixed")]
 a_col, u_col = st.columns(2)
 with a_col:
-    st.subheader("✅ Areas of agreement")
+    st.subheader("Areas of agreement")
     for r in strong[:8]:
         st.markdown(f"- {r.claim[:220]} {cite(r.supporting_source_ids)}  \n  "
                     f"<span class='dr-muted'>{r.assessment}</span>", unsafe_allow_html=True)
     if not strong:
         st.caption("No claim is corroborated by two or more independent sources.")
 with u_col:
-    st.subheader("❓ Areas of uncertainty")
+    st.subheader("Areas of uncertainty")
     for r in uncertain[:8]:
         st.markdown(f"- {r.claim[:220]}  \n  <span class='dr-muted'>{r.assessment}</span>", unsafe_allow_html=True)
     single = sum(r.agreement.value == "single_source" for r in bundle.matrix)
     st.caption(f"{single} evidence row(s) rest on a single independent source and are not corroborated.")
 
-st.subheader("🕳️ Research gaps")
+st.subheader("Research gaps")
 if bundle.gaps:
     st.dataframe(pd.DataFrame([{"Gap": g.kind.value.replace("_", " "), "Description": g.description,
                                 "Priority": g.priority, "Expected value": g.expected_value,
