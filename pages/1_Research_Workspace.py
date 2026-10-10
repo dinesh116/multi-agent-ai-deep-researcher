@@ -8,9 +8,9 @@ from pydantic import ValidationError
 from src.ingestion.extract import ALLOWED_UPLOADS, ExtractionError, extract_upload
 from src.models.research import DEPTH_PRESETS, Depth, ResearchMode, ResearchRequest, SourcePreference
 from src.ui.components import page_header
-from src.ui.state import effective_settings, get_repo, preference, select_run
+from src.ui.state import current_user, effective_settings, get_repo, preference, select_run
 
-repo, settings = get_repo(), effective_settings()
+repo, settings, user = get_repo(), effective_settings(), current_user()
 page_header("Research", "Research Workspace", "Ask a complex question. Sensible defaults are set, so you can just type and run.")
 
 EXAMPLES = [
@@ -53,9 +53,13 @@ c1.caption(f"{preset['subquestions']} subquestions · up to {preset['budget'].ma
            f"{preset['budget'].max_sources} sources · {preset['budget'].max_seconds // 60} min")
 max_iter = c2.slider("Maximum follow-up rounds", 1, 6, value=int(preference("max_iterations")), key="q_iter",
                      help="Bounded research loop: the orchestrator may stop earlier if evidence is sufficient.")
-mode = c3.radio("Mode", [m.value for m in ResearchMode], index=0 if preference("mode") == "demo" else 1,
+mode = c3.radio("Mode", [m.value for m in ResearchMode],
+                index=0 if (preference("mode") == "demo" or not user.can_use_live) else 1,
                 format_func=lambda m: "Demo (offline, synthetic)" if m == "demo" else "Live research",
-                key="q_mode")
+                key="q_mode", disabled=not user.can_use_live)
+if not user.can_use_live:
+    mode = ResearchMode.DEMO.value
+    c3.caption("Sign in (sidebar) to run live research.")
 
 pref_labels = {SourcePreference.WEB: "Web", SourcePreference.ACADEMIC: "Academic papers", SourcePreference.NEWS: "News",
                SourcePreference.OFFICIAL: "Official / regulatory", SourcePreference.UPLOADED: "My documents",
@@ -83,24 +87,30 @@ else:
     st.caption("Demo mode searches a bundled SYNTHETIC corpus offline with deterministic agents. Nothing is sent "
                "over the network.")
 
+selected_docs: list[str] = []
 with st.expander("Your documents (PDF, TXT, Markdown, CSV)"):
-    uploads = st.file_uploader("Add documents to the research corpus", type=[e.lstrip(".") for e in ALLOWED_UPLOADS],
-                               accept_multiple_files=True, key=f"uploader_{st.session_state.get('up_round', 0)}")
-    if uploads and st.button("Add uploaded files"):
-        for file in uploads:
-            try:
-                doc = extract_upload(file.name, file.getvalue(), settings.max_upload_bytes)
-                doc_id, created = repo.save_document(file.name, doc.title, doc.kind, file.getvalue(), doc.sections,
-                                                     doc.warnings)
-                st.success(f"{file.name}: {'added' if created else 'already in your library'} "
-                           f"({len(doc.sections)} sections)")
-            except ExtractionError as exc:
-                st.error(str(exc))
-        st.session_state["up_round"] = st.session_state.get("up_round", 0) + 1
-    library = repo.list_documents()
-    selected_docs = st.multiselect("Include these documents", [d["id"] for d in library],
-                                   format_func=lambda i: next(f"{d['title'][:60]} ({d['filename']})" for d in library
-                                                              if d["id"] == i), key="q_docs")
+    if user.is_guest:
+        st.caption("Sign in to upload your own documents. Uploads are private to your account.")
+    else:
+        uploads = st.file_uploader("Add documents to the research corpus", type=[e.lstrip(".") for e in ALLOWED_UPLOADS],
+                                   accept_multiple_files=True, key=f"uploader_{st.session_state.get('up_round', 0)}")
+        if uploads and st.button("Add uploaded files"):
+            for file in uploads:
+                try:
+                    doc = extract_upload(file.name, file.getvalue(), settings.max_upload_bytes)
+                    doc_id, created = repo.save_document(file.name, doc.title, doc.kind, file.getvalue(), doc.sections,
+                                                         doc.warnings, owner_id=user.id)
+                    if created:
+                        repo.log_activity(user.id, "upload", detail={"filename": file.name})
+                    st.success(f"{file.name}: {'added' if created else 'already in your library'} "
+                               f"({len(doc.sections)} sections)")
+                except ExtractionError as exc:
+                    st.error(str(exc))
+            st.session_state["up_round"] = st.session_state.get("up_round", 0) + 1
+        library = repo.list_documents(user.id)
+        selected_docs = st.multiselect("Include these documents", [d["id"] for d in library],
+                                       format_func=lambda i: next(f"{d['title'][:60]} ({d['filename']})" for d in library
+                                                                  if d["id"] == i), key="q_docs")
 
 if st.button("Run research", icon=":material/play_arrow:", type="primary", width="stretch"):
     try:
@@ -119,7 +129,7 @@ if st.button("Run research", icon=":material/play_arrow:", type="primary", width
     st.switch_page("pages/2_Research_Progress.py")
 
 st.subheader("Recent research")
-runs = repo.list_runs(limit=6)
+runs = repo.list_runs(user.id, limit=6)
 if not runs:
     st.caption("No investigations yet.")
 for run in runs:

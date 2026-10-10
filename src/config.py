@@ -32,6 +32,13 @@ class Settings:
     http_timeout: float
     llm_timeout: float
     max_upload_mb: int
+    turso_database_url: str | None = None  # libsql://<db>-<org>.<region>.turso.io (not secret on its own)
+    turso_auth_token: str | None = None  # secret
+    admin_emails: tuple[str, ...] = ()  # signed-in users who may change app-wide settings
+
+    @property
+    def uses_turso(self) -> bool:
+        return bool(self.turso_database_url and self.turso_auth_token)
 
     @property
     def llm_configured(self) -> bool:
@@ -66,4 +73,7 @@ def get_settings() -> Settings:
         http_timeout=float(_env("HTTP_TIMEOUT_SECONDS", "20")),
         llm_timeout=float(_env("LLM_TIMEOUT_SECONDS", "60")),
         max_upload_mb=int(_env("MAX_UPLOAD_MB", "15")),
+        turso_database_url=_env("TURSO_DATABASE_URL"),
+        turso_auth_token=_env("TURSO_AUTH_TOKEN"),
+        admin_emails=tuple(e.strip().lower() for e in (_env("ADMIN_EMAILS", "") or "").split(",") if e.strip()),
     )

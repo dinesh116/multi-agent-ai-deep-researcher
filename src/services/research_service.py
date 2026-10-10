@@ -30,13 +30,15 @@ def initial_state(request: ResearchRequest, run_id: str) -> ResearchState:
 def run_research(request: ResearchRequest, settings: Settings, repo=None, on_event: Callable[[AgentEvent], None] | None = None,
                  provider_settings: ProviderSettings | None = None, llm: LLMClient | None = None,
                  uploaded_documents: list[dict] | None = None, today: date | None = None,
-                 run_id: str | None = None, providers=None) -> ResearchState:
+                 run_id: str | None = None, providers=None, owner_id: str = "local") -> ResearchState:
     """Execute one investigation. Persists the run (if `repo` is given) and returns the final state."""
+    if owner_id.startswith("guest:") and request.mode == ResearchMode.LIVE:
+        raise PermissionError("Live research requires signing in. Guests can use demo mode.")
     run_id = run_id or new_id("run")
     provider_settings = provider_settings or ProviderSettings()
     documents = uploaded_documents
     if documents is None and repo is not None and request.document_ids:
-        documents = repo.get_documents(request.document_ids)
+        documents = repo.get_documents(request.document_ids, owner_id)  # only the owner's own documents
     providers = providers or build_providers(settings, request.mode, {p.value for p in request.source_preferences},
                                              documents or [], provider_settings)
     if llm is None and request.use_llm and request.mode == ResearchMode.LIVE:
@@ -62,7 +64,9 @@ def run_research(request: ResearchRequest, settings: Settings, repo=None, on_eve
     if ctx.use_llm and not ctx.llm_enabled:
         ctx.event("orchestrator", "info", "OPENROUTER_API_KEY is not configured: agents use deterministic logic only.")
     if repo is not None:
-        repo.create_run(run_id, request)
+        repo.create_run(run_id, request, owner_id)
+        repo.log_activity(owner_id, "run_started", run_id, {"question": request.question, "mode": request.mode.value,
+                                                           "depth": request.depth.value})
 
     graph = build_graph(ctx)
     final: ResearchState = dict(state)
@@ -84,5 +88,7 @@ def run_research(request: ResearchRequest, settings: Settings, repo=None, on_eve
               f"Research {status} in {final['usage'].elapsed_seconds}s.")
     final["events"] = events
     if repo is not None:
-        repo.save_run_results(run_id, final, status)
+        repo.save_run_results(run_id, final, status, owner_id)
+        repo.log_activity(owner_id, "run_completed" if status == "completed" else "run_failed", run_id,
+                          {"sources": len(final.get("sources", [])), "seconds": final["usage"].elapsed_seconds})
     return final

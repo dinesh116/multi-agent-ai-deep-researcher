@@ -8,7 +8,7 @@ import streamlit as st
 
 from src.config import APP_NAME
 from src.ui.components import hero, inject_css
-from src.ui.state import get_repo, sidebar
+from src.ui.state import current_user, get_repo, sidebar
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 st.set_page_config(page_title=APP_NAME, page_icon=":material/science:", layout="wide")
@@ -28,6 +28,16 @@ AGENTS = [
 def home() -> None:
     hero("Research that shows its evidence", "Multi-hop, multi-source investigations by a team of specialised AI "
                                              "agents, with every conclusion traceable to the passage that supports it.")
+    user = current_user()
+    if user.is_guest:
+        with st.container(border=True):
+            left, right = st.columns([3, 1])
+            left.markdown("**Sign in for live research and a private history.** Your investigations, documents and "
+                          "activity are visible only to you. Without signing in you can try the synthetic demo.")
+            right.button("Sign in with Google", icon=":material/login:", on_click=st.login, args=("google",),
+                         type="primary", width="stretch")
+    elif user.auth_enabled:
+        st.caption(f"Signed in as {user.email or user.name}. Your history is private to your account.")
     c1, c2, c3 = st.columns(3)
     c1.page_link("pages/1_Research_Workspace.py", label="Start an investigation", icon=":material/arrow_forward:")
     c2.page_link("pages/7_Research_History.py", label="Open a previous report", icon=":material/history:")

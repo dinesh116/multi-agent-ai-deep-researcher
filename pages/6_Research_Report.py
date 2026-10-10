@@ -8,10 +8,10 @@ from src.agents.qa import answer_question
 from src.reporting.render import to_html, to_markdown, to_pdf
 from src.services.llm import LLMClient
 from src.ui.components import demo_banner, page_header
-from src.ui.state import effective_settings, get_repo, preference, require_run
+from src.ui.state import current_user, effective_settings, get_repo, preference, require_run
 
 bundle = require_run()
-repo, settings = get_repo(), effective_settings()
+repo, settings, user = get_repo(), effective_settings(), current_user()
 report = bundle.report
 page_header("Report", "Research Report", bundle.summary.question)
 demo_banner(bundle.summary.mode)
@@ -25,15 +25,15 @@ demo = bundle.summary.mode == "demo"
 slug = re.sub(r"[^a-z0-9]+", "-", report.question.lower())[:50].strip("-") or "report"
 e1, e2, e3, e4 = st.columns(4)
 banner = demo and preference("include_demo_banner")
-e1.download_button("Markdown", to_markdown(report, banner), file_name=f"{slug}.md", mime="text/markdown", icon=":material/download:",
+e1.download_button("Markdown", on_click=repo.log_activity, args=(user.id, "export", bundle.summary.id, {"format": "markdown"}), data=to_markdown(report, banner), file_name=f"{slug}.md", mime="text/markdown", icon=":material/download:",
                    width="stretch")
-e2.download_button("HTML", to_html(report, banner), file_name=f"{slug}.html", mime="text/html", icon=":material/download:",
+e2.download_button("HTML", on_click=repo.log_activity, args=(user.id, "export", bundle.summary.id, {"format": "html"}), data=to_html(report, banner), file_name=f"{slug}.html", mime="text/html", icon=":material/download:",
                    width="stretch")
 if e3.button("Prepare PDF", width="stretch"):
     st.session_state[f"pdf_{bundle.summary.id}"] = to_pdf(report, banner)
 pdf = st.session_state.get(f"pdf_{bundle.summary.id}")
 if pdf:
-    e3.download_button("PDF", pdf, file_name=f"{slug}.pdf", mime="application/pdf", icon=":material/download:", width="stretch")
+    e3.download_button("PDF", on_click=repo.log_activity, args=(user.id, "export", bundle.summary.id, {"format": "pdf"}), data=pdf, file_name=f"{slug}.pdf", mime="application/pdf", icon=":material/download:", width="stretch")
 elif f"pdf_{bundle.summary.id}" in st.session_state:
     e3.caption("PDF rendering failed. Use HTML and print to PDF.")
 if e4.button("Refine investigation", icon=":material/replay:", width="stretch"):
@@ -74,7 +74,7 @@ with st.expander(f"Citation traceability: {sum(c.valid for c in checks)}/{len(ch
 st.divider()
 st.subheader("Ask about this investigation")
 st.caption("Answers come from this run's evidence (claims, evidence matrix and source passages), not just the report.")
-history = repo.list_qa(bundle.summary.id)
+history = repo.list_qa(bundle.summary.id, user.id)
 for item in history:
     with st.chat_message("user"):
         st.markdown(item["question"])
@@ -105,4 +105,5 @@ if question:
                 st.markdown(f"**[{c['n']}]** {c['label']} · {c['origin']}" + (f" · {c['location']}" if c["location"] else "")
                             + (f"\n\n> {c['passage']}" if c["passage"] else ""))
         st.caption(f"Basis: {answer.basis} · {answer.method}")
-    repo.save_qa(bundle.summary.id, question, answer.model_dump())
+    repo.save_qa(bundle.summary.id, question, answer.model_dump(), user.id)
+    repo.log_activity(user.id, "qa", bundle.summary.id, {"question": question[:200]})
