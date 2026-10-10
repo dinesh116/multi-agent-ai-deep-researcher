@@ -1,16 +1,20 @@
-"""Shared UI state: repository, settings, provider configuration, selected run and sidebar."""
+"""Shared UI state: repository, settings, provider configuration, the signed-in user, selected run and sidebar."""
 from __future__ import annotations
 
 import dataclasses
+from html import escape
 
 import streamlit as st
 
-from src.config import APP_NAME, Settings, get_settings, mask_secret
+from src.auth.session import SESSION_KEY, sign_out
+from src.config import Settings, get_settings
 from src.database.repository import Repository
 from src.models.run import RunBundle
+from src.models.user import User
 from src.search.registry import ProviderSettings
+from src.ui.theme import active_theme
 
-DEFAULTS = {"depth": "standard", "max_iterations": 2, "mode": "live", "use_llm": True, "include_demo_banner": True}
+DEFAULTS = {"depth": "standard", "max_iterations": 2, "use_llm": True, "include_demo_banner": True}
 
 
 @st.cache_resource
@@ -36,11 +40,26 @@ def preference(key: str):
     return get_repo().get_setting(f"pref_{key}", DEFAULTS[key])
 
 
+# ---------------------------------------------------------------------- signed-in user
+def current_user_id() -> str | None:
+    return st.session_state.get(SESSION_KEY)
+
+
+def require_user() -> User:
+    """The signed-in user (app.py only shows pages to signed-in users, so this is always set there)."""
+    user = get_repo().get_user(current_user_id() or "")
+    if user is None:
+        st.session_state.clear()
+        st.rerun()
+    return user
+
+
+# ---------------------------------------------------------------------- selected run (always one of the user's own)
 def selected_run_id() -> str | None:
     run_id = st.session_state.get("selected_run_id")
     if run_id:
         return run_id
-    runs = [r for r in get_repo().list_runs(limit=5) if r.status == "completed"]
+    runs = [r for r in get_repo().list_runs(limit=5, user_id=current_user_id()) if r.status == "completed"]
     return runs[0].id if runs else None
 
 
@@ -51,7 +70,7 @@ def load_selected_run() -> RunBundle | None:
     cache = st.session_state.setdefault("_bundle_cache", {})
     if run_id not in cache:
         bundle = get_repo().load_run(run_id)
-        if bundle is None:
+        if bundle is None or bundle.summary.user_id != current_user_id():  # missing, or another user's run
             st.session_state.pop("selected_run_id", None)
             return None
         cache.clear()
@@ -67,38 +86,26 @@ def select_run(run_id: str) -> None:
 def require_run() -> RunBundle:
     bundle = load_selected_run()
     if bundle is None:
-        st.info("No research run selected yet. Start an investigation in the **Research Workspace**, or open one "
-                "from **Research History**.", icon=":material/info:")
-        st.page_link("pages/1_Research_Workspace.py", label="Go to Research Workspace", icon=":material/arrow_forward:")
+        st.info("No research run selected yet. Start an investigation in **New research**, or open one from "
+                "**My research runs**.", icon=":material/info:")
+        st.page_link("pages/1_Research_Workspace.py", label="Start new research", icon=":material/arrow_forward:")
         st.stop()
     return bundle
 
 
-def sidebar() -> None:
-    settings = effective_settings()
+# ---------------------------------------------------------------------- sidebar footer (the menu itself is st.navigation)
+def sidebar(user: User) -> None:
     with st.sidebar:
         bundle = load_selected_run()
         if bundle:
             st.caption("Current investigation")
-            st.markdown(f"**{bundle.summary.question[:110]}**")
+            st.markdown(f"**{escape(bundle.summary.question[:110])}**")
             mode = "Demo (synthetic)" if bundle.summary.mode == "demo" else "Live research"
             st.caption(f"{mode} · {bundle.summary.created_at:%d %b %Y %H:%M} · {bundle.summary.status}")
-        st.divider()
-        st.caption("Capabilities")
-
-        def row(label: str, on: bool, value: str) -> str:
-            return (f'<div class="dr-cap"><span class="dr-dot {"on" if on else "off"}"></span>'
-                    f'<span class="dr-cap-k">{label}</span><span class="dr-cap-v">{value}</span></div>')
-        st.markdown(
-            row("LLM", settings.llm_configured, settings.openrouter_model if settings.llm_configured else "not configured")
-            + row("Web search", settings.web_search_configured, "Tavily" if settings.web_search_configured else "not configured")
-            + row("Academic", True, "OpenAlex · Crossref · arXiv")
-            + row("Demo corpus", True, "offline · synthetic"), unsafe_allow_html=True)
-        with st.expander("Data & safety", icon=":material/lock:"):
-            st.markdown(
-                f"- Runs, sources and reports are stored locally in `{settings.db_path.name}` (SQLite).\n"
-                "- API keys are read from `.env` and are never stored or displayed in full "
-                f"(OpenRouter: {mask_secret(settings.openrouter_api_key)}).\n"
-                "- Retrieved pages and uploads are treated as untrusted data; instructions inside them are ignored.\n"
-                "- Agents can only call the configured search APIs and fetch public pages from search results.")
-        st.caption(f"{APP_NAME} · research assistant. Verify important conclusions against the original sources.")
+            st.divider()
+        st.markdown(f'<div class="dr-user"><div class="dr-avatar" aria-hidden="true">{escape(user.initials)}</div>'
+                    f'<div><b>{escape(user.name)}</b><span>Signed in with {escape(user.provider_label)}</span></div></div>',
+                    unsafe_allow_html=True)
+        if st.button("Sign out", icon=":material/logout:", width="stretch", key="sign_out"):
+            sign_out()
+        st.caption(f"{active_theme().title()} theme · switch Light, Dark or System in ⋮ › Settings.")

@@ -13,6 +13,7 @@ from src.models.research import BudgetUsage, ResearchPlan, ResearchRequest
 
 class RunSummary(BaseModel):
     id: str
+    user_id: str | None = None  # owner; None only for runs created before accounts existed
     question: str
     status: str
     mode: str

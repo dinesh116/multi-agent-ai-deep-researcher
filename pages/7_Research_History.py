@@ -1,17 +1,19 @@
-"""Page 7: Research History. Reopen or delete persisted investigations."""
+"""Page 7: My research runs. Reopen or delete the signed-in user's investigations."""
 import pandas as pd
 import streamlit as st
 
 from src.ui.components import page_header
-from src.ui.state import get_repo, select_run, selected_run_id
+from src.ui.state import get_repo, require_user, select_run, selected_run_id
 
+user = require_user()
 repo = get_repo()
-page_header("Library", "Research History", "Completed investigations are stored locally and can be reopened without repeating the research.")
+page_header("Library", "My research runs", "Your investigations, live and demo. Reopen any of them without repeating the research.")
 
-runs = repo.list_runs(limit=200)
+runs = repo.list_runs(limit=200, user_id=user.id)
 if not runs:
     st.info("No research runs yet.", icon=":material/info:")
     st.page_link("pages/1_Research_Workspace.py", label="Start an investigation", icon=":material/arrow_forward:")
+    st.page_link("pages/9_Demo.py", label="Or try the offline demo", icon=":material/science:")
     st.stop()
 
 status_filter = st.segmented_control("Status", ["all", "completed", "failed", "running"], default="all") or "all"
@@ -43,7 +45,7 @@ for run in runs:
         with b2.popover("Delete", icon=":material/delete:"):
             st.write("Delete this run and all of its stored sources, evidence, report and Q&A?")
             if st.button("Delete", key=f"del_{run.id}", type="primary"):
-                repo.delete_run(run.id)
+                repo.delete_run(run.id, user_id=user.id)
                 if current == run.id:
                     st.session_state.pop("selected_run_id", None)
                 st.session_state.pop("_bundle_cache", None)

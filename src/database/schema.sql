@@ -2,8 +2,22 @@
 -- so deleting a run removes all of its stored evidence. No secrets are stored.
 -- Indexed columns hold identifiers/relationships; `data` holds the full validated Pydantic record as JSON.
 
+-- Accounts. password_hash is a salted scrypt hash (NULL for Google/Microsoft sign-in); profile is JSON.
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    auth_provider TEXT NOT NULL,       -- password | google | microsoft | oidc
+    password_hash TEXT,
+    profile TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    last_login_at TEXT
+);
+
+-- user_id links each run to its owner (added to older databases by Repository._migrate).
 CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY,
+    user_id TEXT,
     question TEXT NOT NULL,
     status TEXT NOT NULL,              -- running | completed | failed
     mode TEXT NOT NULL,                -- demo | live

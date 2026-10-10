@@ -25,7 +25,7 @@ uv pip install -r requirements.txt    # or: pip install -r requirements.txt
 
 cp .env.example .env                  # optional: add keys for live research (see below)
 streamlit run app.py                  # http://localhost:8501
-pytest                                # 87 tests, offline, no API keys needed
+pytest                                # offline, no API keys needed
 ```
 
 **From VS Code:** open this folder, select the `.venv` interpreter, then use **Run and Debug → "Deep Researcher AI
@@ -33,7 +33,7 @@ pytest                                # 87 tests, offline, no API keys needed
 
 ## Demo mode vs live research
 
-| | Demo mode (default) | Live research |
+| | Demo page | Live research |
 |---|---|---|
 | Sources | 27 bundled **synthetic** sources (`data/sample_research/corpus.json`) | OpenAlex, Crossref, arXiv (no key), Tavily web/news (`TAVILY_API_KEY`), your uploads |
 | Network | none | search APIs + bounded fetching of public result pages |
@@ -63,16 +63,32 @@ OpenRouter only handles language tasks. It is **not** used for web search; sourc
 providers, which you can toggle on the **Settings** page. Without Tavily, live mode still searches the academic
 sources and your uploads, and says so in the run log.
 
+## Accounts and sign-in
+
+Visitors first see a sign-in screen. Accounts can be created with **email and password** (stored as salted scrypt
+hashes in SQLite), or users can **Continue with Google / Microsoft** through Streamlit's built-in OpenID Connect
+(`st.login`). To enable the single-sign-on buttons, copy `.streamlit/secrets.toml.example` to
+`.streamlit/secrets.toml` (git-ignored) and fill in the OAuth client details; email accounts work without it.
+
+Every research run is linked to the account that started it: history, recent runs, reports and Q&A show only your
+own runs. On an existing installation, the first account created inherits the runs made before accounts existed.
+Uploaded documents remain a shared library on this server.
+
 ## The pages
 
-1. **Research Workspace**: question, context, objectives, depth, source types, date range, follow-up rounds, mode, document uploads, recent runs.
-2. **Research Progress**: live orchestrator events (current agent and subquestion, searches, sources, claims, round), then the stored audit trail, search log, budget usage and stopping decision.
-3. **Evidence Explorer**: filterable sources with provenance, assessments, flags, passages, claims and duplicate links.
-4. **Critical Analysis**: evidence matrix, contradictions side by side, agreement vs uncertainty, gaps, coverage, quality flags.
-5. **Insights & Hypotheses**: findings, trends, hypotheses, risks and opportunities, each labelled observed/inferred/speculative, with confidence, alternatives, limitations and evidence.
-6. **Research Report**: 12-section cited report, citation-traceability table, Markdown/HTML/PDF export, follow-up Q&A, "Refine investigation".
-7. **Research History**: reopen or delete persisted runs.
-8. **Settings**: model, providers, defaults and limits, masked key status, cache and document management.
+The sidebar menu (with the Deep Research Agent logo) groups the pages:
+
+- **Home**: ask a question, reopen your recent research, the LangGraph workflow and the agent team.
+- **New research**: question, context, objectives, depth, source types, date range, follow-up rounds, document uploads.
+- **Research**: *Progress* (live orchestrator events and the audit trail), *Evidence explorer*, *Critical analysis*,
+  *Insights* (observed / inferred / speculative) and *Report* (12-section cited report, exports, follow-up Q&A).
+- **Library**: *My research runs* (reopen or delete your runs) and *Demo* (runs the workflow offline on the synthetic
+  corpus, on its own page).
+- **Account**: *Update profile* (name, age, sex, education, occupation, interests) and *Settings* (model, providers,
+  limits, capabilities, cache and documents).
+
+The UI is a dual-theme glassmorphic design that adapts to desktop, tablet and phone. It follows the visitor's system
+theme; switch between Light, Dark and System from the ⋮ menu › Settings.
 
 ## How it works (summary)
 
@@ -88,8 +104,8 @@ budget is exhausted, when no gap is worth pursuing, or when a round finds no new
 ## Project structure
 
 ```
-app.py                     entry point, navigation, home
-pages/                     8 Streamlit pages
+app.py                     entry point: sign-in gate and navigation
+pages/                     Streamlit pages (home, research, library, demo, profile, settings)
 src/config.py              settings from .env (secrets masked)
 src/models/                research, evidence and run models (Pydantic)
 src/orchestration/         LangGraph graph, typed state, budget tracker
@@ -103,7 +119,8 @@ src/retrieval/             BM25
 src/reporting/             Markdown/HTML/PDF rendering
 src/database/              SQLite schema and repository
 src/services/              research service, LLM client
-src/ui/                    shared UI state, components, charts
+src/auth/                  accounts, password hashing, sign-in session (st.login)
+src/ui/                    theme, login, landing graphics, shared state, components, charts
 data/sample_research/      synthetic demo corpus
 tests/                     pytest suite (mocked providers, fake LLM, network blocked)
 docs/architecture.md
@@ -111,7 +128,7 @@ docs/architecture.md
 
 ## Testing
 
-`pytest` runs 87 tests offline. An autouse fixture **fails any test that touches the network**; providers use
+`pytest` runs the suite offline. An autouse fixture **fails any test that touches the network**; providers use
 `httpx.MockTransport`, and the LLM is a fake OpenAI client. The tests cover question validation, plan
 generation and schema, provider parsing (Tavily, OpenAlex, Crossref, arXiv), retries and rate limits, SSRF
 blocking, document extraction, normalisation and dedup, syndication, claims and verbatim-quote validation, the
@@ -128,7 +145,8 @@ Q&A citation validation, and prompt-injection handling.
 - Retrieval is keyword-based (BM25); paraphrased questions may retrieve less well than with embeddings.
 - Full-text fetching is limited to 6 pages per round and skips non-HTML content.
 - Scanned PDFs need OCR (not included). Model costs are tracked as calls and tokens, not money.
-- Single local user; no authentication.
+- Email sessions last for the browser session (a reload asks you to sign in again); Google/Microsoft sign-in persists via a cookie.
+- Theme switching uses Streamlit's own Light/Dark/System setting; there is no separate in-app toggle.
 
 ## Troubleshooting
 

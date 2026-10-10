@@ -1,4 +1,4 @@
-"""SQLite repository: research runs, evidence, documents, search cache and settings.
+"""SQLite repository: users, research runs, evidence, documents, search cache and settings.
 
 All SQL lives here. A short-lived connection is opened per operation (safe with Streamlit's threads).
 """
@@ -17,8 +17,10 @@ from src.models.evidence import (AgentEvent, AgentStatus, Claim, Contradiction, 
                                  Passage, Report, ResearchGap, Source, SourceAssessment)
 from src.models.research import BudgetUsage, ResearchPlan, ResearchRequest, new_id, now
 from src.models.run import RunBundle, RunSummary
+from src.models.user import User, UserProfile
 
 SCHEMA = Path(__file__).with_name("schema.sql")
+RUN_SUMMARY_COLUMNS = "id, user_id, question, status, mode, created_at, completed_at, summary, counts, parent_run_id"
 
 
 def _dump(model) -> str:
@@ -31,6 +33,15 @@ class Repository:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(SCHEMA.read_text())
+            self._migrate(conn)
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """Bring databases created before user accounts up to date (idempotent)."""
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(runs)")}
+        if "user_id" not in columns:
+            conn.execute("ALTER TABLE runs ADD COLUMN user_id TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_user ON runs (user_id, created_at)")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -44,14 +55,14 @@ class Repository:
             conn.close()
 
     # ------------------------------------------------------------------ runs
-    def create_run(self, run_id: str, request: ResearchRequest) -> None:
+    def create_run(self, run_id: str, request: ResearchRequest, user_id: str | None = None) -> None:
         with self._connect() as conn:
-            conn.execute("INSERT INTO runs (id, question, status, mode, created_at, parent_run_id, request) "
-                         "VALUES (?, ?, 'running', ?, ?, ?, ?)",
-                         (run_id, request.question, request.mode.value, now().isoformat(), request.parent_run_id,
+            conn.execute("INSERT INTO runs (id, user_id, question, status, mode, created_at, parent_run_id, request) "
+                         "VALUES (?, ?, ?, 'running', ?, ?, ?, ?)",
+                         (run_id, user_id, request.question, request.mode.value, now().isoformat(), request.parent_run_id,
                           request.model_dump_json()))
 
-    def save_run_results(self, run_id: str, state: dict, status: str) -> None:
+    def save_run_results(self, run_id: str, state: dict, status: str, user_id: str | None = None) -> None:
         report: Report | None = state.get("report")
         exec_summary = report.section("executive_summary").content if report and report.section("executive_summary") else ""
         counts = {"sources": len(state.get("sources", [])), "claims": len(state.get("claims", [])),
@@ -61,8 +72,9 @@ class Repository:
             exists = conn.execute("SELECT 1 FROM runs WHERE id = ?", (run_id,)).fetchone()
             if not exists:
                 request = state["request"]
-                conn.execute("INSERT INTO runs (id, question, status, mode, created_at, request) VALUES (?, ?, ?, ?, ?, ?)",
-                             (run_id, request.question, status, request.mode.value, now().isoformat(),
+                conn.execute("INSERT INTO runs (id, user_id, question, status, mode, created_at, request) "
+                             "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                             (run_id, user_id, request.question, status, request.mode.value, now().isoformat(),
                               request.model_dump_json()))
             conn.execute(
                 "UPDATE runs SET status = ?, completed_at = ?, plan = ?, usage = ?, statuses = ?, stop_reason = ?, "
@@ -105,13 +117,26 @@ class Repository:
             conn.executemany("INSERT INTO search_log VALUES (?, ?, ?, ?, ?, ?)", [
                 (run_id, n, r.provider, r.query, r.status, _dump(r)) for n, r in enumerate(state.get("search_log", []))])
 
-    def list_runs(self, limit: int = 100) -> list[RunSummary]:
+    @staticmethod
+    def _summary(r: sqlite3.Row) -> RunSummary:
+        return RunSummary(id=r["id"], user_id=r["user_id"], question=r["question"], status=r["status"], mode=r["mode"],
+                          created_at=r["created_at"], completed_at=r["completed_at"], summary=r["summary"] or "",
+                          counts=json.loads(r["counts"] or "{}"), parent_run_id=r["parent_run_id"])
+
+    def list_runs(self, limit: int = 100, user_id: str | None = None, mode: str | None = None) -> list[RunSummary]:
+        """Most recent runs first. With `user_id`, only that user's runs; with `mode`, only demo or live runs."""
+        where, params = [], []
+        if user_id is not None:
+            where.append("user_id = ?")
+            params.append(user_id)
+        if mode is not None:
+            where.append("mode = ?")
+            params.append(mode)
+        clause = f"WHERE {' AND '.join(where)} " if where else ""
         with self._connect() as conn:
-            rows = conn.execute("SELECT id, question, status, mode, created_at, completed_at, summary, counts, "
-                                "parent_run_id FROM runs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
-        return [RunSummary(id=r["id"], question=r["question"], status=r["status"], mode=r["mode"],
-                           created_at=r["created_at"], completed_at=r["completed_at"], summary=r["summary"] or "",
-                           counts=json.loads(r["counts"] or "{}"), parent_run_id=r["parent_run_id"]) for r in rows]
+            rows = conn.execute(f"SELECT {RUN_SUMMARY_COLUMNS} FROM runs {clause}ORDER BY created_at DESC LIMIT ?",
+                                (*params, limit)).fetchall()
+        return [self._summary(r) for r in rows]
 
     def load_run(self, run_id: str) -> RunBundle | None:
         with self._connect() as conn:
@@ -123,10 +148,7 @@ class Repository:
                 return [r["data"] for r in conn.execute(f"SELECT data FROM {table} WHERE run_id = ? ORDER BY {order}",
                                                         (run_id,)).fetchall()]
             report_row = conn.execute("SELECT data FROM reports WHERE run_id = ?", (run_id,)).fetchone()
-            summary = RunSummary(id=run["id"], question=run["question"], status=run["status"], mode=run["mode"],
-                                 created_at=run["created_at"], completed_at=run["completed_at"],
-                                 summary=run["summary"] or "", counts=json.loads(run["counts"] or "{}"),
-                                 parent_run_id=run["parent_run_id"])
+            summary = self._summary(run)
             return RunBundle(
                 summary=summary, request=ResearchRequest.model_validate_json(run["request"]),
                 plan=ResearchPlan.model_validate_json(run["plan"]) if run["plan"] else None,
@@ -148,9 +170,70 @@ class Repository:
                 warnings=json.loads(run["warnings"] or "[]"), errors=json.loads(run["errors"] or "[]"),
                 provider_notes=json.loads(run["provider_notes"] or "[]"))
 
-    def delete_run(self, run_id: str) -> None:
+    def delete_run(self, run_id: str, user_id: str | None = None) -> None:
+        """Delete a run (cascades to every per-run table). With `user_id`, only if that user owns it."""
         with self._connect() as conn:
-            conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))  # cascades to every per-run table
+            if user_id is None:
+                conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+            else:
+                conn.execute("DELETE FROM runs WHERE id = ? AND user_id = ?", (run_id, user_id))
+
+    def claim_unowned_runs(self, user_id: str) -> int:
+        """Assign runs created before accounts existed to `user_id`. Returns how many were claimed."""
+        with self._connect() as conn:
+            return conn.execute("UPDATE runs SET user_id = ? WHERE user_id IS NULL", (user_id,)).rowcount
+
+    # ------------------------------------------------------------------ users
+    @staticmethod
+    def _user(row: sqlite3.Row) -> User:
+        return User(id=row["id"], email=row["email"], name=row["name"], auth_provider=row["auth_provider"],
+                    profile=UserProfile.model_validate_json(row["profile"] or "{}"), created_at=row["created_at"],
+                    last_login_at=row["last_login_at"])
+
+    def count_users(self) -> int:
+        with self._connect() as conn:
+            return conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+    def create_user(self, email: str, name: str, auth_provider: str, password_hash: str | None = None) -> User:
+        """Create an account. Raises ValueError if the email is already registered."""
+        user_id = new_id("usr")
+        try:
+            with self._connect() as conn:
+                conn.execute("INSERT INTO users (id, email, name, auth_provider, password_hash, profile, created_at, "
+                             "last_login_at) VALUES (?, ?, ?, ?, ?, '{}', ?, ?)",
+                             (user_id, email, name, auth_provider, password_hash, now().isoformat(), now().isoformat()))
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("An account with this email already exists. Sign in instead.") from exc
+        return self.get_user(user_id)
+
+    def get_user(self, user_id: str) -> User | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return self._user(row) if row else None
+
+    def get_credentials(self, email: str) -> tuple[User, str | None] | None:
+        """The user and their stored password hash (None for single-sign-on accounts)."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+        return (self._user(row), row["password_hash"]) if row else None
+
+    def upsert_oauth_user(self, email: str, name: str, provider: str) -> User:
+        """Find the account for a Google/Microsoft identity, creating it on first sign-in."""
+        found = self.get_credentials(email)
+        if found:
+            self.record_login(found[0].id)
+            return found[0]
+        return self.create_user(email, name, provider)
+
+    def record_login(self, user_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("UPDATE users SET last_login_at = ? WHERE id = ?", (now().isoformat(), user_id))
+
+    def update_user(self, user_id: str, name: str, profile: UserProfile) -> User:
+        with self._connect() as conn:
+            conn.execute("UPDATE users SET name = ?, profile = ? WHERE id = ?",
+                         (name.strip()[:80] or "Researcher", profile.model_dump_json(), user_id))
+        return self.get_user(user_id)
 
     def mark_stale_runs(self) -> None:
         """Runs left 'running' by a closed app session are marked failed on startup."""

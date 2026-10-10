@@ -1,64 +1,66 @@
-# Theme inspired by the Composio docs look: near-white / near-black surfaces, hairline borders,
-# square corners, a deep-blue accent, a neo-grotesk sans and JetBrains Mono for labels.
-# ABC Diatype (Composio's font) is commercially licensed, so Geist (OFL) is used as the sans-serif.
+# Dual-theme glassmorphic look. Both palettes are defined, so the app follows the visitor's system preference and
+# anyone can switch Light / Dark / System from the ⋮ menu › Settings. src/ui/theme.py layers the frosted-glass CSS
+# (with matching tokens) on top of whichever theme is active. Fonts: Geist (OFL) and JetBrains Mono.
 
 [theme]
-font = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap, sans-serif"
-headingFont = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap, sans-serif"
+font = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap, sans-serif"
+headingFont = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap, sans-serif"
 codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap, monospace"
 baseFontSize = 15
-headingFontWeights = [500, 500, 500, 500, 500, 500]
+headingFontWeights = [600, 600, 600, 600, 600, 600]
 headingFontSizes = ["2.4rem", "1.55rem", "1.2rem", "1.05rem", "1rem", "0.95rem"]
-metricValueFontWeight = 500
-baseRadius = "none"
-buttonRadius = "none"
+metricValueFontWeight = 600
+baseRadius = "0.75rem"
+buttonRadius = "0.75rem"
 showWidgetBorder = true
-showSidebarBorder = true
+showSidebarBorder = false
 linkUnderline = false
 
 [theme.light]
-primaryColor = "#0007cd"
-backgroundColor = "#fbfbfb"
-secondaryBackgroundColor = "#f3f3f3"
-textColor = "#0f0f0f"
-borderColor = "#e5e5e5"
-dataframeBorderColor = "#e5e5e5"
-dataframeHeaderBackgroundColor = "#f3f3f3"
-linkColor = "#0007cd"
-codeBackgroundColor = "#f3f3f3"
-blueColor = "#0007cd"
-greenColor = "#009588"
-orangeColor = "#f05100"
-yellowColor = "#fcbb00"
-redColor = "#dc2626"
-chartCategoricalColors = ["#0007cd", "#009588", "#f05100", "#fcbb00", "#104e64", "#f99c00", "#585858"]
+primaryColor = "#0D6E66"
+backgroundColor = "#E9EFF6"
+secondaryBackgroundColor = "#F7F9FC"
+textColor = "#08111F"
+borderColor = "#D3DCE7"
+dataframeBorderColor = "#DCE3EC"
+dataframeHeaderBackgroundColor = "#F1F5F9"
+linkColor = "#0D6E66"
+codeBackgroundColor = "#F1F5F9"
+blueColor = "#2346B8"
+greenColor = "#0D6E66"
+orangeColor = "#C2410C"
+yellowColor = "#B7791F"
+redColor = "#B42318"
+violetColor = "#6D28D9"
+chartCategoricalColors = ["#0D6E66", "#2346B8", "#C2410C", "#B7791F", "#6D28D9", "#0E7490", "#4E5B6E"]
 
 [theme.light.sidebar]
-backgroundColor = "#fbfbfb"
-secondaryBackgroundColor = "#f3f3f3"
-borderColor = "#e5e5e5"
+backgroundColor = "#F2F6FA"
+secondaryBackgroundColor = "#FFFFFF"
+borderColor = "#D3DCE7"
 
 [theme.dark]
-primaryColor = "#5b8bf0"
-backgroundColor = "#0f0f0f"
-secondaryBackgroundColor = "#1c1c1c"
-textColor = "#fbfbfb"
-borderColor = "#262626"
-dataframeBorderColor = "#262626"
-dataframeHeaderBackgroundColor = "#1a1a1a"
-linkColor = "#5b8bf0"
-codeBackgroundColor = "#1a1a1a"
-blueColor = "#5b8bf0"
-greenColor = "#00bb7f"
-orangeColor = "#f99c00"
-yellowColor = "#fcbb00"
-redColor = "#ef4444"
-chartCategoricalColors = ["#5b8bf0", "#00bb7f", "#f99c00", "#ac4bff", "#ff2357", "#1447e6", "#b4b4b4"]
+primaryColor = "#2DD4BF"
+backgroundColor = "#05070C"
+secondaryBackgroundColor = "#121722"
+textColor = "#F4F7FB"
+borderColor = "#262E3B"
+dataframeBorderColor = "#232A36"
+dataframeHeaderBackgroundColor = "#141A25"
+linkColor = "#2DD4BF"
+codeBackgroundColor = "#121722"
+blueColor = "#9DB6FF"
+greenColor = "#2DD4BF"
+orangeColor = "#FB923C"
+yellowColor = "#F5C065"
+redColor = "#FF8A8A"
+violetColor = "#C4A8FF"
+chartCategoricalColors = ["#2DD4BF", "#9DB6FF", "#FB923C", "#F5C065", "#C4A8FF", "#67E8F9", "#B3BDCB"]
 
 [theme.dark.sidebar]
-backgroundColor = "#0f0f0f"
-secondaryBackgroundColor = "#1a1a1a"
-borderColor = "#262626"
+backgroundColor = "#0A0D14"
+secondaryBackgroundColor = "#121722"
+borderColor = "#262E3B"
 
 [server]
 maxUploadSize = 15

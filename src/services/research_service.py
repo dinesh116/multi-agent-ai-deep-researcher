@@ -30,8 +30,8 @@ def initial_state(request: ResearchRequest, run_id: str) -> ResearchState:
 def run_research(request: ResearchRequest, settings: Settings, repo=None, on_event: Callable[[AgentEvent], None] | None = None,
                  provider_settings: ProviderSettings | None = None, llm: LLMClient | None = None,
                  uploaded_documents: list[dict] | None = None, today: date | None = None,
-                 run_id: str | None = None, providers=None) -> ResearchState:
-    """Execute one investigation. Persists the run (if `repo` is given) and returns the final state."""
+                 run_id: str | None = None, providers=None, user_id: str | None = None) -> ResearchState:
+    """Execute one investigation. Persists the run (if `repo` is given) under `user_id` and returns the final state."""
     run_id = run_id or new_id("run")
     provider_settings = provider_settings or ProviderSettings()
     documents = uploaded_documents
@@ -62,7 +62,7 @@ def run_research(request: ResearchRequest, settings: Settings, repo=None, on_eve
     if ctx.use_llm and not ctx.llm_enabled:
         ctx.event("orchestrator", "info", "OPENROUTER_API_KEY is not configured: agents use deterministic logic only.")
     if repo is not None:
-        repo.create_run(run_id, request)
+        repo.create_run(run_id, request, user_id=user_id)
 
     graph = build_graph(ctx)
     final: ResearchState = dict(state)
@@ -84,5 +84,5 @@ def run_research(request: ResearchRequest, settings: Settings, repo=None, on_eve
               f"Research {status} in {final['usage'].elapsed_seconds}s.")
     final["events"] = events
     if repo is not None:
-        repo.save_run_results(run_id, final, status)
+        repo.save_run_results(run_id, final, status, user_id=user_id)
     return final

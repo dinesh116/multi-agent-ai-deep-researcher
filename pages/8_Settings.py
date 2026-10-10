@@ -12,6 +12,23 @@ env = get_settings()
 settings = effective_settings()
 page_header("Configuration", "Settings", "Model, search providers, research limits and local data.")
 
+st.subheader("Capabilities")
+caps = st.columns(4)
+caps[0].metric("LLM", "On" if settings.llm_configured else "Off", help=settings.openrouter_model if settings.llm_configured else "Set OPENROUTER_API_KEY")
+caps[1].metric("Web search", "Tavily" if settings.web_search_configured else "Off")
+caps[2].metric("Academic", "3 sources", help="OpenAlex, Crossref and arXiv (no key needed)")
+caps[3].metric("Demo corpus", "Offline", help="Synthetic sources, used only on the Demo page")
+with st.expander("Data & safety", icon=":material/lock:"):
+    st.markdown(
+        f"- Accounts, runs, sources and reports are stored locally in `{settings.db_path.name}` (SQLite). Each run "
+        "belongs to the account that started it, and only that account can open or delete it.\n"
+        "- Passwords are stored only as salted scrypt hashes. Google and Microsoft sign-in store no password.\n"
+        "- API keys are read from `.env` and are never stored or displayed in full "
+        f"(OpenRouter: {mask_secret(settings.openrouter_api_key)}).\n"
+        "- Retrieved pages and uploads are treated as untrusted data; instructions inside them are ignored.\n"
+        "- Agents can only call the configured search APIs and fetch public pages from search results.")
+st.caption("Appearance follows your Streamlit theme: choose Light, Dark or System from the ⋮ menu › Settings.")
+
 st.subheader("API keys (read from .env)")
 st.dataframe(pd.DataFrame([
     {"Setting": "OPENROUTER_API_KEY", "Status": mask_secret(env.openrouter_api_key), "Used for": "LLM planning, extraction, synthesis, Q&A"},
@@ -46,16 +63,15 @@ with st.form("providers"):
         repo.set_setting("providers", {"tavily": tavily, "openalex": openalex, "crossref": crossref, "arxiv": arxiv,
                                        "fetch_full_text": fetch})
         st.success("Saved.")
-st.caption("Demo mode always uses the offline synthetic corpus, whatever the settings here.")
+st.caption("The Demo page always uses the offline synthetic corpus, whatever the settings here.")
 
 st.subheader("Research defaults and limits")
 with st.form("defaults"):
     depth = st.selectbox("Default depth", [d.value for d in Depth], index=[d.value for d in Depth].index(preference("depth")))
     iterations = st.slider("Default maximum follow-up rounds", 1, 6, int(preference("max_iterations")))
-    mode = st.radio("Default mode", ["demo", "live"], index=0 if preference("mode") == "demo" else 1, horizontal=True)
     banner = st.checkbox("Add a 'synthetic demo' banner to exported demo reports", value=bool(preference("include_demo_banner")))
     if st.form_submit_button("Save defaults"):
-        for key, value in {"depth": depth, "max_iterations": iterations, "mode": mode, "include_demo_banner": banner}.items():
+        for key, value in {"depth": depth, "max_iterations": iterations, "include_demo_banner": banner}.items():
             repo.set_setting(f"pref_{key}", value)
         st.success("Saved.")
 st.dataframe(pd.DataFrame([{

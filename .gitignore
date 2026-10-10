@@ -1,5 +1,6 @@
 # Secrets
 .env
+.streamlit/secrets.toml
 
 # Python
 .venv/
@@ -16,5 +17,6 @@ data/exports/
 data/vector_store/
 logs/
 *.log
+ds-venv/
 
 .DS_Store

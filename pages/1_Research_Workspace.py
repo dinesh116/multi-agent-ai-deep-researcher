@@ -8,10 +8,12 @@ from pydantic import ValidationError
 from src.ingestion.extract import ALLOWED_UPLOADS, ExtractionError, extract_upload
 from src.models.research import DEPTH_PRESETS, Depth, ResearchMode, ResearchRequest, SourcePreference
 from src.ui.components import page_header
-from src.ui.state import effective_settings, get_repo, preference, select_run
+from src.ui.state import effective_settings, get_repo, preference, require_user, select_run
 
+user = require_user()
 repo, settings = get_repo(), effective_settings()
-page_header("Research", "Research Workspace", "Ask a complex question. Sensible defaults are set, so you can just type and run.")
+page_header("Research", "New research", "Ask a complex question. Sensible defaults are set, so you can just type and run.")
+st.page_link("pages/9_Demo.py", label="No API keys yet? Try the offline demo instead", icon=":material/science:")
 
 EXAMPLES = [
     "How will agentic AI transform enterprise software over the next five years?",
@@ -43,7 +45,7 @@ with st.expander("Background context and objectives (optional)"):
                            help="What you already know, what decision this informs, or constraints. Used for planning.")
     objectives_text = st.text_area("Research objectives (one per line)", key="q_objectives", height=80)
 
-c1, c2, c3 = st.columns([2, 2, 1.4])
+c1, c2 = st.columns(2)
 depth_options = [d.value for d in Depth]
 depth = c1.segmented_control("Investigation depth", depth_options, default=preference("depth"),
                              format_func=lambda d: {"quick": "Quick", "standard": "Standard", "deep": "Deep"}[d],
@@ -53,9 +55,6 @@ c1.caption(f"{preset['subquestions']} subquestions · up to {preset['budget'].ma
            f"{preset['budget'].max_sources} sources · {preset['budget'].max_seconds // 60} min")
 max_iter = c2.slider("Maximum follow-up rounds", 1, 6, value=int(preference("max_iterations")), key="q_iter",
                      help="Bounded research loop: the orchestrator may stop earlier if evidence is sufficient.")
-mode = c3.radio("Mode", [m.value for m in ResearchMode], index=0 if preference("mode") == "demo" else 1,
-                format_func=lambda m: "Demo (offline, synthetic)" if m == "demo" else "Live research",
-                key="q_mode")
 
 pref_labels = {SourcePreference.WEB: "Web", SourcePreference.ACADEMIC: "Academic papers", SourcePreference.NEWS: "News",
                SourcePreference.OFFICIAL: "Official / regulatory", SourcePreference.UPLOADED: "My documents",
@@ -68,20 +67,15 @@ use_dates = d1.checkbox("Limit publication dates", key="q_use_dates")
 date_from = d2.date_input("From", value=date(date.today().year - 3, 1, 1), disabled=not use_dates, key="q_from")
 date_to = d3.date_input("To", value=date.today(), disabled=not use_dates, key="q_to")
 
-if mode == ResearchMode.LIVE.value:
-    notes = []
-    if not settings.web_search_configured:
-        notes.append("Web/news search is off (no `TAVILY_API_KEY`). Academic sources and uploads remain available.")
-    if not settings.llm_configured:
-        notes.append("No `OPENROUTER_API_KEY`: agents use deterministic logic (no LLM planning or synthesis).")
-    for note in notes:
-        st.caption(note)
-    use_llm = st.toggle("Use LLM for planning, extraction and synthesis", value=settings.llm_configured,
-                        disabled=not settings.llm_configured, key="q_llm")
-else:
-    use_llm = False
-    st.caption("Demo mode searches a bundled SYNTHETIC corpus offline with deterministic agents. Nothing is sent "
-               "over the network.")
+notes = []
+if not settings.web_search_configured:
+    notes.append("Web/news search is off (no `TAVILY_API_KEY`). Academic sources and uploads remain available.")
+if not settings.llm_configured:
+    notes.append("No `OPENROUTER_API_KEY`: agents use deterministic logic (no LLM planning or synthesis).")
+for note in notes:
+    st.caption(note)
+use_llm = st.toggle("Use LLM for planning, extraction and synthesis", value=settings.llm_configured,
+                    disabled=not settings.llm_configured, key="q_llm")
 
 with st.expander("Your documents (PDF, TXT, Markdown, CSV)"):
     uploads = st.file_uploader("Add documents to the research corpus", type=[e.lstrip(".") for e in ALLOWED_UPLOADS],
@@ -105,7 +99,7 @@ with st.expander("Your documents (PDF, TXT, Markdown, CSV)"):
 if st.button("Run research", icon=":material/play_arrow:", type="primary", width="stretch"):
     try:
         request = ResearchRequest(
-            question=question or "", context=context, depth=Depth(depth), max_iterations=max_iter, mode=ResearchMode(mode),
+            question=question or "", context=context, depth=Depth(depth), max_iterations=max_iter, mode=ResearchMode.LIVE,
             objectives=[o for o in (objectives_text or "").splitlines() if o.strip()],
             source_preferences=list(prefs or [SourcePreference.WEB, SourcePreference.ACADEMIC]),
             date_from=date_from if use_dates else None, date_to=date_to if use_dates else None, use_llm=use_llm,
@@ -118,8 +112,8 @@ if st.button("Run research", icon=":material/play_arrow:", type="primary", width
     st.session_state.pop("parent_run_id", None)
     st.switch_page("pages/2_Research_Progress.py")
 
-st.subheader("Recent research")
-runs = repo.list_runs(limit=6)
+st.subheader("Your recent research")
+runs = repo.list_runs(limit=6, user_id=user.id)
 if not runs:
     st.caption("No investigations yet.")
 for run in runs:
