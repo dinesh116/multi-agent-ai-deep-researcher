@@ -11,7 +11,8 @@ from src.models.research import ResearchRequest, new_id
 from src.orchestration.state import AGENT_ORDER
 from src.services.research_service import run_research
 from src.ui.components import AGENT_TITLES, STATUS_ICON, demo_banner, page_header
-from src.ui.state import effective_settings, get_repo, load_selected_run, provider_settings, select_run
+from src.ui.state import (current_user, effective_settings, get_repo, load_selected_run, provider_settings,
+                         select_run)
 
 repo = get_repo()
 page_header("Orchestration", "Research Progress", "Live workflow events from the LangGraph orchestrator, and the audit trail of each run.")
@@ -31,6 +32,7 @@ def event_rows(events: list[AgentEvent]) -> pd.DataFrame:
 pending = st.session_state.pop("pending_request", None)
 if pending:
     request = ResearchRequest.model_validate_json(pending)
+    owner_id = current_user().id
     run_id = new_id("run")
     events: "queue.Queue[AgentEvent]" = queue.Queue()
     outcome: dict = {}
@@ -38,7 +40,7 @@ if pending:
     def worker() -> None:  # Streamlit UI calls must stay on the main thread, so the run reports via a queue
         try:
             outcome["state"] = run_research(request, effective_settings(), repo=repo, on_event=events.put,
-                                            provider_settings=provider_settings(), run_id=run_id)
+                                            provider_settings=provider_settings(), run_id=run_id, owner_id=owner_id)
         except Exception as exc:  # surfaced below; the run row is marked failed by the service
             outcome["error"] = f"{type(exc).__name__}: {exc}"
 

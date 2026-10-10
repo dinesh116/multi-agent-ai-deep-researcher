@@ -34,6 +34,13 @@ class Settings:
     max_upload_mb: int
     openrouter_fast_model: str | None = None  # cheap model for high-volume extraction (defaults to the main model)
     semantic_scholar_api_key: str | None = None
+    turso_database_url: str | None = None  # libsql://<db>-<org>.<region>.turso.io (not secret on its own)
+    turso_auth_token: str | None = None  # secret
+    admin_emails: tuple[str, ...] = ()  # signed-in users who may change app-wide settings
+
+    @property
+    def uses_turso(self) -> bool:
+        return bool(self.turso_database_url and self.turso_auth_token)
 
     @property
     def fast_model(self) -> str:
@@ -74,4 +81,7 @@ def get_settings() -> Settings:
         max_upload_mb=int(_env("MAX_UPLOAD_MB", "15")),
         openrouter_fast_model=_env("OPENROUTER_FAST_MODEL"),
         semantic_scholar_api_key=_env("SEMANTIC_SCHOLAR_API_KEY"),
+        turso_database_url=_env("TURSO_DATABASE_URL"),
+        turso_auth_token=_env("TURSO_AUTH_TOKEN"),
+        admin_emails=tuple(e.strip().lower() for e in (_env("ADMIN_EMAILS", "") or "").split(",") if e.strip()),
     )

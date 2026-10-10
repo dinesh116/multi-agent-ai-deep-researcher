@@ -1,5 +1,6 @@
 # Secrets
 .env
+.streamlit/secrets.toml
 
 # Python
 .venv/
@@ -11,6 +12,8 @@ __pycache__/
 # Application data (research runs, caches, uploads): never commit
 data/*.db
 data/*.db-*
+data/*.db-info
+data/*-replica.db*
 data/uploads/
 data/exports/
 data/vector_store/

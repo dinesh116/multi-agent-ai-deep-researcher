@@ -25,11 +25,35 @@ uv pip install -r requirements.txt    # or: pip install -r requirements.txt
 
 cp .env.example .env                  # optional: add keys for live research (see below)
 streamlit run app.py                  # http://localhost:8501
-pytest                                # 111 tests, offline, no API keys needed
+pytest                                # 130 tests, offline, no API keys needed
 ```
 
 **From VS Code:** open this folder, select the `.venv` interpreter, then use **Run and Debug → "Deep Researcher AI
 (Streamlit)"**. Tests appear in the Testing panel.
+
+## Accounts, privacy and storage
+
+**Accounts (optional).** With Google sign-in configured, every research run, uploaded document, follow-up Q&A and
+activity entry belongs to the signed-in user, and every database query is filtered by that user. Users can't list,
+open, delete or export each other's data, even by guessing a run id. Visitors who aren't signed in are **guests**:
+they can run the synthetic demo, which is visible only in their browser session and deleted after 24 hours, but not
+live research, uploads or settings. **Research History → My activity** shows sign-ins, runs, Q&A, exports and uploads,
+and **Delete my data** removes everything a user owns. Admins (`ADMIN_EMAILS`) manage models and providers and see
+usage counts per user, never content. Without sign-in configured, the app runs as a single local user (who is admin).
+
+**Set up Google sign-in (about 10 minutes):**
+1. Google Cloud Console → *APIs & Services* → *OAuth consent screen*: create one (External, your email as a test user).
+2. *Credentials* → *Create credentials* → *OAuth client ID* → *Web application*. Add authorised redirect URIs
+   `http://localhost:8501/oauth2callback` and `https://<your-app>.streamlit.app/oauth2callback`.
+3. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` (git-ignored) and fill in `[auth]` and
+   `[auth.google]`. For the deployed app, paste the same content into Streamlit Cloud → *Settings* → *Secrets*, with the
+   deployed `redirect_uri`.
+
+**Persistent storage (optional): Turso.** By default data is stored in a local SQLite file, which on Streamlit Cloud
+is wiped on every restart. Set `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` (in `.env` or Secrets) to store
+everything in a hosted Turso database instead. The app keeps an embedded replica (fast local reads), and writes go to
+Turso, so history survives restarts and redeploys. Create a token with `turso db tokens create <db>` or in the Turso
+dashboard. Existing single-user databases are migrated automatically (their data becomes the local user's).
 
 ## Demo mode vs live research
 
@@ -135,7 +159,7 @@ docs/architecture.md
 
 ## Testing
 
-`pytest` runs 111 tests offline. An autouse fixture **fails any test that touches the network**; providers use
+`pytest` runs 130 tests offline. An autouse fixture **fails any test that touches the network**; providers use
 `httpx.MockTransport`, and the LLM is a fake OpenAI client. The tests cover question validation, plan
 generation and schema, provider parsing (Tavily, OpenAlex, Crossref, arXiv), retries and rate limits, SSRF
 blocking, document extraction, normalisation and dedup, syndication, claims and verbatim-quote validation, the
