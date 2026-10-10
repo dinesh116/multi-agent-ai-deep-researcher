@@ -50,3 +50,16 @@ Tracing exports telemetry to the configured LangSmith region. Custom request spa
 Keep real LangSmith keys in ignored local configuration or deployed Secrets. Never use a shortened portal key, print credentials during diagnostics or commit them. `LANGSMITH_TRACING=false` is the research tracing master switch; its runtime off behavior still needs verification. No per-user quotas or global concurrency limits were introduced.
 
 See [observability.md](observability.md) for the complete privacy scope, troubleshooting and evidence-based verification record.
+
+## Authentication console diagnostics
+
+Temporarily set top-level `AUTH_DIAGNOSTICS = "true"` in deployed Streamlit Secrets (before `[auth]`), then reboot. Locally use `AUTH_DIAGNOSTICS=true` in `.env`. Inspect the deployment's server logs, not the browser console. Restore false after diagnosis.
+
+- `AUTH_CONFIG`: required authentication field names with true/false status; secret-loading exception class; callback HTTPS, path and local-host checks. Logged once per session/configuration status change. True means a nonempty string passed the existing placeholder check, not that Google accepted the credential.
+- `AUTH_BLOCKED`: production stopped because authentication configuration was missing, incomplete or unreadable. This occurs before Google login; changing Google's allowed URLs alone cannot fix missing deployed Secrets.
+- `AUTH_LOGIN_START`: the app attempted to start Google sign-in.
+- `AUTH_LOGIN_FAILED`: synchronous login-start failure, with exception class only.
+- `AUTH_SESSION_ACCEPTED`: a signed-in session with a provider subject reached the app; no identity values are logged.
+- `AUTH_SESSION_INVALID`: the returned session has no usable provider subject.
+
+Both localhost and production redirect URIs may be registered in Google Cloud. The deployed `[auth].redirect_uri` must select the exact production HTTPS callback ending in `/oauth2callback`; local configuration selects localhost. Diagnostics do not remotely inspect Google's registered redirect URIs, test credentials, or intercept callback errors handled internally by Streamlit/Authlib. Do not enable HTTP wire logging or share complete secret files to diagnose those errors.

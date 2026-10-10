@@ -9,7 +9,7 @@ import streamlit as st
 from src.config import APP_NAME
 from src.models.research import DEMO_QUESTIONS
 from src.ui.components import AGENT_INFO, AGENT_TITLES, eyebrow, html, inject_css
-from src.ui.state import current_user, get_repo, new_research, sidebar
+from src.ui.state import current_user, get_repo, new_research, sidebar, login_google
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 st.set_page_config(page_title=APP_NAME, page_icon="assets/icon.svg", layout="wide")
@@ -35,7 +35,7 @@ def home() -> None:
             st.switch_page("app_pages/1_Research_Workspace.py")
         if user.is_guest:
             b2.button("Sign in with Google", icon=":material/login:", width="stretch", key="hero_signin",
-                      on_click=st.login, args=("google",))
+                      on_click=login_google)
         elif b2.button("Start researching", icon=":material/travel_explore:", width="stretch", key="hero_start"):
             new_research()
         html('<div class="ds-proof"><div class="ds-avatars"><span>R</span><span>A</span><span>T</span><span>+</span>'

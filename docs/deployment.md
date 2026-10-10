@@ -42,3 +42,16 @@ The upgrade has offline automated tests for the graph, ingestion, chart provenan
 Configure top-level `LANGSMITH_TRACING`, `APP_API_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` and the workspace-region endpoint in Streamlit Secrets before TOML table headers. Keep `LANGSMITH_HIDE_INPUTS` and `LANGSMITH_HIDE_OUTPUTS` enabled for private data. Use a separate production tracing project, and supply a workspace ID if the key requires it. Restart after configuration changes.
 
 See [observability.md](observability.md) for an APAC example, portal/token instructions and 403 troubleshooting. Local traces were confirmed by screenshots; deployed tracing, master-off, graph-only and telemetry-failure behavior remain unverified. Complete those checks alongside the hosted workflow checklist above.
+
+## Authentication console diagnostics
+
+Temporarily set top-level `AUTH_DIAGNOSTICS = "true"` in deployed Streamlit Secrets (before `[auth]`), then reboot. Locally use `AUTH_DIAGNOSTICS=true` in `.env`. Inspect the deployment's server logs, not the browser console. Restore false after diagnosis.
+
+- `AUTH_CONFIG`: required authentication field names with true/false status; secret-loading exception class; callback HTTPS, path and local-host checks. Logged once per session/configuration status change. True means a nonempty string passed the existing placeholder check, not that Google accepted the credential.
+- `AUTH_BLOCKED`: production stopped because authentication configuration was missing, incomplete or unreadable. This occurs before Google login; changing Google's allowed URLs alone cannot fix missing deployed Secrets.
+- `AUTH_LOGIN_START`: the app attempted to start Google sign-in.
+- `AUTH_LOGIN_FAILED`: synchronous login-start failure, with exception class only.
+- `AUTH_SESSION_ACCEPTED`: a signed-in session with a provider subject reached the app; no identity values are logged.
+- `AUTH_SESSION_INVALID`: the returned session has no usable provider subject.
+
+Both localhost and production redirect URIs may be registered in Google Cloud. The deployed `[auth].redirect_uri` must select the exact production HTTPS callback ending in `/oauth2callback`; local configuration selects localhost. Diagnostics do not remotely inspect Google's registered redirect URIs, test credentials, or intercept callback errors handled internally by Streamlit/Authlib. Do not enable HTTP wire logging or share complete secret files to diagnose those errors.

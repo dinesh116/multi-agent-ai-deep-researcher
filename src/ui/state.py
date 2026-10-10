@@ -9,6 +9,9 @@ Every repository call passes the current user's id, so data is private per user.
 from __future__ import annotations
 
 import dataclasses
+import logging
+import os
+from urllib.parse import urlsplit
 import uuid
 from dataclasses import dataclass
 
@@ -49,21 +52,60 @@ def get_repo() -> Repository:
     return repo
 
 
+logger = logging.getLogger(__name__)
+
+
 def auth_enabled() -> bool:
-    """A missing, incomplete or unreadable auth configuration never grants access."""
+    """Validate configuration and optionally log field status, never values or exception text."""
+    fields = {}
+    error_type = None
+    callback_https = callback_path_ok = callback_local = False
     try:
         auth = st.secrets.get("auth", {})
         provider = auth.get("google", {})
-        required = (auth.get("redirect_uri"), auth.get("cookie_secret"), provider.get("client_id"),
-                    provider.get("client_secret"), provider.get("server_metadata_url"))
-        return all(isinstance(value, str) and value.strip() and "<" not in value for value in required)
-    except Exception:
-        return False
+        fields = {"auth.redirect_uri": auth.get("redirect_uri"),
+                  "auth.cookie_secret": auth.get("cookie_secret"),
+                  "auth.google.client_id": provider.get("client_id"),
+                  "auth.google.client_secret": provider.get("client_secret"),
+                  "auth.google.server_metadata_url": provider.get("server_metadata_url")}
+        fields = {name: bool(isinstance(value, str) and value.strip() and "<" not in value)
+                  for name, value in fields.items()}
+        valid = all(fields.values())
+        if fields["auth.redirect_uri"]:
+            try:
+                callback = urlsplit(auth.get("redirect_uri"))
+                callback_https = callback.scheme == "https"
+                callback_path_ok = callback.path == "/oauth2callback"
+                callback_local = callback.hostname in {"localhost", "127.0.0.1", "::1"}
+            except ValueError:
+                pass
+    except Exception as exc:
+        valid = False
+        error_type = type(exc).__name__
+    diagnostics = os.getenv("AUTH_DIAGNOSTICS", "false").lower() in {"true", "1", "yes"}
+    signature = (valid, tuple(fields.items()), error_type, callback_https, callback_path_ok, callback_local)
+    if diagnostics and st.session_state.get("_auth_diagnostic_signature") != signature:
+        logger.warning("AUTH_CONFIG valid=%s field_status=%s secrets_error_type=%s "
+                       "callback_https=%s callback_path_ok=%s callback_local=%s",
+                       valid, fields, error_type, callback_https, callback_path_ok, callback_local)
+        st.session_state["_auth_diagnostic_signature"] = signature
+    return valid
+
+
+def login_google() -> None:
+    """Log login initiation and synchronous failures without exposing OAuth data."""
+    logger.warning("AUTH_LOGIN_START provider=google")
+    try:
+        st.login("google")
+    except Exception as exc:
+        logger.error("AUTH_LOGIN_FAILED exception_type=%s", type(exc).__name__)
+        st.error("Google sign-in could not start. Check authentication configuration and server logs.")
 
 
 def require_auth_configuration() -> None:
     """Stop deployed apps before opening the shared repository when auth is unavailable."""
     if get_settings().app_env != "local" and not auth_enabled():
+        logger.error("AUTH_BLOCKED production authentication configuration is missing, incomplete or unreadable")
         st.error("Authentication is required in production. Configure Google sign-in in Streamlit Secrets. "
                  "For a private local development session only, explicitly set APP_ENV=local.")
         st.stop()
@@ -77,11 +119,13 @@ def current_user() -> CurrentUser:
     if st.user.get("is_logged_in", False):  # st.user may lack the attribute before auth initialises
         subject = st.user.get("sub")
         if not isinstance(subject, str) or not subject.strip():
+            logger.error("AUTH_SESSION_INVALID provider subject is missing or invalid")
             st.error("Your sign-in session has no valid identity. Please sign out and sign in again.")
             st.stop()
         user_id = subject
         email = (st.user.get("email") or "").lower() or None
         if st.session_state.get("_user_recorded") != user_id:  # once per session: profile + login activity
+            logger.warning("AUTH_SESSION_ACCEPTED provider=google subject_present=true")
             repo = get_repo()
             repo.upsert_user(user_id, email, st.user.get("name"), st.user.get("picture"), provider="google")
             repo.log_activity(user_id, "login", detail={"email": email})
@@ -187,7 +231,7 @@ def profile_block(user: CurrentUser) -> None:
         return
     if user.is_guest:
         st.caption("Sign in to run live research on any question and keep a private history.")
-        st.button("Sign in with Google", icon=":material/login:", on_click=st.login, args=("google",),
+        st.button("Sign in with Google", icon=":material/login:", on_click=login_google,
                   width="stretch", type="primary", key="side_signin")
     else:
         st.button("Sign out", icon=":material/logout:", on_click=st.logout, width="stretch", key="side_signout")
