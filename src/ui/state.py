@@ -10,7 +10,7 @@ from src.database.repository import Repository
 from src.models.run import RunBundle
 from src.search.registry import ProviderSettings
 
-DEFAULTS = {"depth": "standard", "max_iterations": 2, "mode": "demo", "use_llm": True, "include_demo_banner": True}
+DEFAULTS = {"depth": "standard", "max_iterations": 2, "mode": "live", "use_llm": True, "include_demo_banner": True}
 
 
 @st.cache_resource
