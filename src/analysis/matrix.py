@@ -72,15 +72,38 @@ def frequent_terms(claims: list[Claim], share: float = 0.35) -> set[str]:
     return {t for t, n in counts.items() if n / len(claims) > share}
 
 
-def build_matrix(claims: list[Claim], store: EvidenceStore, assessments: dict[str, SourceAssessment],
-                 heuristic: bool = True) -> tuple[list[MatrixRow], list[EvidenceLink], list[Contradiction]]:
-    rows, links, contradictions = [], [], []
-    caveat = " Detected from wording cues; read both passages to confirm." if heuristic else ""
+QUALITY_WEIGHT = {EvidenceQuality.HIGH: 1.0, EvidenceQuality.MEDIUM: 0.6, EvidenceQuality.LOW: 0.25,
+                  EvidenceQuality.UNKNOWN: 0.3}
+
+
+def quality_weighted_strength(source_ids: list[str], store: EvidenceStore,
+                              assessments: dict[str, SourceAssessment]) -> float:
+    """Sum over independent source groups of the best quality weight in each group."""
+    total = 0.0
+    for group in store.independent_groups(list(dict.fromkeys(source_ids))):
+        total += max((QUALITY_WEIGHT[assessments[s].evidence_quality] for s in group if s in assessments), default=0.3)
+    return round(total, 2)
+
+
+def heuristic_groups(claims: list[Claim], assessments: dict[str, SourceAssessment]) -> list[tuple[list[Claim], set[str]]]:
+    """Lexical clusters; the majority polarity is treated as the supporting side."""
+    groups = []
     for members in cluster_claims(claims, assessments, frequent_terms(claims)):
-        weight = sum(c.polarity for c in members)
-        majority = 1 if weight >= 0 else -1
-        support = [c for c in members if c.polarity == majority]
-        contra = [c for c in members if c.polarity != majority]
+        majority = 1 if sum(c.polarity for c in members) >= 0 else -1
+        groups.append((members, {c.id for c in members if c.polarity == majority}))
+    return groups
+
+
+def build_matrix(claims: list[Claim], store: EvidenceStore, assessments: dict[str, SourceAssessment],
+                 heuristic: bool = True, groups: list[tuple[list[Claim], set[str]]] | None = None,
+                 grouped_by: str = "heuristic") -> tuple[list[MatrixRow], list[EvidenceLink], list[Contradiction]]:
+    """Build evidence rows from claim groups. `groups` (members, supporting claim ids) may come from an LLM that
+    grouped claims by proposition; otherwise lexical clustering with polarity cues is used."""
+    rows, links, contradictions = [], [], []
+    caveat = " Detected from wording cues; read both passages to confirm." if heuristic and groups is None else ""
+    for members, support_ids in (groups if groups is not None else heuristic_groups(claims, assessments)):
+        support = [c for c in members if c.id in support_ids] or members[:1]
+        contra = [c for c in members if c not in support]
         rep = support[0]
         row_id = _id("row", *sorted(c.id for c in members))
         support_sources = list(dict.fromkeys(c.source_id for c in support))
@@ -118,16 +141,19 @@ def build_matrix(claims: list[Claim], store: EvidenceStore, assessments: dict[st
         if rep.claim_type == ClaimType.FORECAST:
             unresolved.append("What leading indicators would confirm or refute this forecast?")
 
+        strength = quality_weighted_strength(support_sources, store, assessments)
+        types = sorted({assessments[s].source_type.value for s in support_sources if s in assessments})
         assessment = (f"{agreement.value.replace('_', ' ').title()} evidence: {independent} independent supporting "
                       f"source(s), {independent_contra} contradicting; best supporting quality "
-                      f"{quality.value}.")
+                      f"{quality.value}; quality-weighted strength {strength}.")
         row = MatrixRow(
             id=row_id, claim=rep.text,
             subquestion_id=Counter(c.subquestion_id for c in members).most_common(1)[0][0], claim_type=rep.claim_type,
             supporting_claim_ids=[c.id for c in support], contradicting_claim_ids=[c.id for c in contra],
             supporting_source_ids=support_sources, contradicting_source_ids=contra_sources,
             independent_sources=independent, evidence_quality=quality, agreement=agreement,
-            unresolved_questions=unresolved, weaknesses=weaknesses, assessment=assessment)
+            unresolved_questions=unresolved, weaknesses=weaknesses, assessment=assessment, strength=strength,
+            source_types=types, grouped_by=grouped_by)
         rows.append(row)
         links += [EvidenceLink(claim_id=c.id, row_id=row_id, source_id=c.source_id, passage_id=c.passage_id,
                                relation=Stance.SUPPORTS if c in support else Stance.CONTRADICTS) for c in members]
@@ -147,7 +173,9 @@ def build_matrix(claims: list[Claim], store: EvidenceStore, assessments: dict[st
                         id=_id("con", a.id, b.id), row_id=row_id, topic=truncate(rep.text, 120), claim_a_id=a.id,
                         claim_b_id=b.id, source_a_id=a.source_id, source_b_id=b.source_id,
                         nature="forecast" if ClaimType.FORECAST in (a.claim_type, b.claim_type) else "direct",
-                        explanation="One source affirms what the other disputes or qualifies." + caveat))
+                        explanation=("Grouped by the LLM as opposing positions on the same proposition."
+                                     if grouped_by == "llm" else
+                                     "One source affirms what the other disputes or qualifies." + caveat)))
                     break
     contradictions += numeric_contradictions(claims, rows, store)
     return rows, links, contradictions

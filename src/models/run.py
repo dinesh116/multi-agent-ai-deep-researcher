@@ -6,8 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from src.models.evidence import (AgentEvent, AgentStatus, Claim, Contradiction, EvidenceLink, Insight, MatrixRow,
-                                 Passage, Report, ResearchGap, Source, SourceAssessment)
+from src.models.evidence import (AgentEvent, AgentStatus, Claim, Contradiction, DataPoint, Entity, EvidenceLink,
+                                 Insight, MatrixRow, Passage, Report, ResearchGap, Source, SourceAssessment)
 from src.models.research import BudgetUsage, ResearchPlan, ResearchRequest
 
 
@@ -40,6 +40,8 @@ class RunBundle(BaseModel):
     gaps: list[ResearchGap] = Field(default_factory=list)
     insights: list[Insight] = Field(default_factory=list)
     report: Report | None = None
+    data_points: list[DataPoint] = Field(default_factory=list)
+    entities: list[Entity] = Field(default_factory=list)
     events: list[AgentEvent] = Field(default_factory=list)
     search_log: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

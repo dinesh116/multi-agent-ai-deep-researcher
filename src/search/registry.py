@@ -7,7 +7,8 @@ from src.config import Settings
 from src.models.research import ResearchMode
 from src.search.http import HttpClient
 from src.search.local import DemoProvider, UploadedDocumentProvider
-from src.search.providers import ArxivProvider, CrossrefProvider, OpenAlexProvider, TavilyProvider
+from src.search.providers import (ArxivProvider, CrossrefProvider, OpenAlexProvider, SemanticScholarProvider,
+                                  TavilyProvider)
 
 
 @dataclass
@@ -18,7 +19,9 @@ class ProviderSettings:
     openalex: bool = True
     crossref: bool = True
     arxiv: bool = True
-    fetch_full_text: bool = True  # fetch and extract full pages for web results (bounded, SSRF-safe)
+    semantic_scholar: bool = True
+    tavily_advanced: bool = True  # advanced depth + raw page content (about 2 Tavily credits per search)
+    fetch_full_text: bool = True  # fetch web pages / open-access PDFs for full text (bounded, SSRF-safe)
 
 
 @dataclass
@@ -27,6 +30,7 @@ class ProviderSet:
     notes: list[str] = field(default_factory=list)  # capability explanations shown to the user
     http: HttpClient | None = None
     crossref: CrossrefProvider | None = None  # for resolving DOI leads
+    openalex: OpenAlexProvider | None = None  # for citation snowballing
 
     @property
     def live(self) -> bool:
@@ -46,11 +50,12 @@ def build_providers(settings: Settings, mode: ResearchMode, preferences: set[str
         result.http = http
         wants_web = bool(preferences & {"web", "news", "official"})
         if wants_web and choices.tavily:
-            tavily = TavilyProvider(settings.tavily_api_key, http)
+            tavily = TavilyProvider(settings.tavily_api_key, http, advanced=choices.tavily_advanced)
             if tavily.available:
                 result.providers.append(tavily)
                 if "news" in preferences:
-                    result.providers.append(TavilyProvider(settings.tavily_api_key, http, topic="news"))
+                    result.providers.append(TavilyProvider(settings.tavily_api_key, http, topic="news",
+                                                           advanced=choices.tavily_advanced))
                     result.providers[-1].name = "tavily_news"
                     result.providers[-1].label = "Tavily news search"
             else:
@@ -58,7 +63,10 @@ def build_providers(settings: Settings, mode: ResearchMode, preferences: set[str
                                     "(OpenAlex, Crossref, arXiv) and uploaded documents can still be searched.")
         if "academic" in preferences:
             if choices.openalex:
-                result.providers.append(OpenAlexProvider(http, settings.contact_email))
+                result.openalex = OpenAlexProvider(http, settings.contact_email)
+                result.providers.append(result.openalex)
+            if choices.semantic_scholar:
+                result.providers.append(SemanticScholarProvider(http, settings.semantic_scholar_api_key))
             if choices.crossref:
                 result.crossref = CrossrefProvider(http, settings.contact_email)
                 result.providers.append(result.crossref)

@@ -64,6 +64,7 @@ rows = [r for r in bundle.matrix if r.agreement.value in chosen and (r.subquesti
 st.dataframe(pd.DataFrame([{
     "Claim": r.claim, "Type": r.claim_type.value, "Supporting": cite(r.supporting_source_ids),
     "Contradicting": cite(r.contradicting_source_ids) or "–", "Independent sources": r.independent_sources,
+    "Strength": r.strength,
     "Agreement": r.agreement.value.replace("_", " "), "Quality": r.evidence_quality.value,
     "Weaknesses": "; ".join(r.weaknesses), "Unresolved": "; ".join(r.unresolved_questions),
     "Subquestion": r.subquestion_id} for r in rows]), hide_index=True, width="stretch", height=420)
@@ -84,6 +85,29 @@ with u_col:
         st.markdown(f"- {r.claim[:220]}  \n  <span class='dr-muted'>{r.assessment}</span>", unsafe_allow_html=True)
     single = sum(r.agreement.value == "single_source" for r in bundle.matrix)
     st.caption(f"{single} evidence row(s) rest on a single independent source and are not corroborated.")
+
+st.subheader("Quantitative evidence")
+st.caption("Numbers extracted from the sources, each with the exact sentence it came from. "
+           + ("LLM-extracted values were checked verbatim against the passage." if any(d.extracted_by == "llm" for d in bundle.data_points)
+              else "Measure labels were derived heuristically. Read the quote before relying on a figure."))
+if bundle.data_points:
+    chart = charts.data_points_bar(bundle.data_points, ref)
+    if chart:
+        st.plotly_chart(chart, width="stretch")
+    st.dataframe(pd.DataFrame([{
+        "Measure": d.metric, "Value": d.value_text, "Kind": d.kind, "Population / sample": d.subject, "Period": d.period,
+        "Method": d.method, "Source": cite([d.source_id]), "Quote": d.quote, "Extracted by": d.extracted_by}
+        for d in bundle.data_points]), hide_index=True, width="stretch", height=320)
+else:
+    st.caption("No quantitative data points were extracted.")
+
+st.subheader("Recurring entities")
+if bundle.entities:
+    st.dataframe(pd.DataFrame([{"Entity": e.name, "Type": e.kind.replace("_", " "), "Sources": len(e.source_ids),
+                                "Mentions": e.mentions, "Cited as": cite(e.source_ids)} for e in bundle.entities]),
+                 hide_index=True, width="stretch")
+else:
+    st.caption("No organisation, product or technology recurred across sources.")
 
 st.subheader("Research gaps")
 if bundle.gaps:

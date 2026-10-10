@@ -6,7 +6,7 @@ import streamlit as st
 from pydantic import ValidationError
 
 from src.ingestion.extract import ALLOWED_UPLOADS, ExtractionError, extract_upload
-from src.models.research import DEPTH_PRESETS, Depth, ResearchMode, ResearchRequest, SourcePreference
+from src.models.research import DEPTH_PRESETS, Depth, ReportFormat, ResearchMode, ResearchRequest, SourcePreference
 from src.ui.components import page_header
 from src.ui.state import effective_settings, get_repo, preference, select_run
 
@@ -50,7 +50,8 @@ depth = c1.segmented_control("Investigation depth", depth_options, default=prefe
                              key="q_depth") or "standard"
 preset = DEPTH_PRESETS[Depth(depth)]
 c1.caption(f"{preset['subquestions']} subquestions · up to {preset['budget'].max_searches} searches · "
-           f"{preset['budget'].max_sources} sources · {preset['budget'].max_seconds // 60} min")
+           f"{preset['budget'].max_sources} sources · {preset['full_text_fetches']} full texts/round · "
+           f"{preset['budget'].max_seconds // 60} min")
 max_iter = c2.slider("Maximum follow-up rounds", 1, 6, value=int(preference("max_iterations")), key="q_iter",
                      help="Bounded research loop: the orchestrator may stop earlier if evidence is sufficient.")
 mode = c3.radio("Mode", [m.value for m in ResearchMode], index=0 if preference("mode") == "demo" else 1,
@@ -62,6 +63,10 @@ pref_labels = {SourcePreference.WEB: "Web", SourcePreference.ACADEMIC: "Academic
                SourcePreference.DATASET: "Datasets"}
 prefs = st.pills("Source types", list(pref_labels), default=[p for p in pref_labels if p != SourcePreference.DATASET],
                  selection_mode="multi", format_func=lambda p: pref_labels[p], key="q_prefs")
+
+FORMAT_LABELS = {ReportFormat.AUTO: "Auto: match the question (outlook, evidence assessment, literature review, landscape)",
+                 ReportFormat.BRIEF: "Executive brief", ReportFormat.FULL: "Full report (every section)"}
+report_format = st.selectbox("Report format", list(FORMAT_LABELS), format_func=FORMAT_LABELS.get, key="q_format")
 
 d1, d2, d3 = st.columns([1, 1.5, 1.5])
 use_dates = d1.checkbox("Limit publication dates", key="q_use_dates")
@@ -78,6 +83,13 @@ if mode == ResearchMode.LIVE.value:
         st.caption(note)
     use_llm = st.toggle("Use LLM for planning, extraction and synthesis", value=settings.llm_configured,
                         disabled=not settings.llm_configured, key="q_llm")
+    budget = preset["budget"]
+    st.caption(f"Run budget (hard caps): up to {budget.max_searches} searches"
+               + (f" (≈ {budget.max_searches * 2} Tavily credits with advanced search)" if settings.web_search_configured else "")
+               + (f" · up to {budget.max_llm_calls} LLM calls / {budget.max_llm_tokens // 1000}k tokens "
+                  f"({settings.openrouter_model}" + (f" + {settings.fast_model} for extraction" if settings.fast_model !=
+                                                       settings.openrouter_model else "") + ")" if use_llm else "")
+               + ". Actual usage is usually lower and is shown on the Research Progress page.")
 else:
     use_llm = False
     st.caption("Demo mode searches a bundled SYNTHETIC corpus offline with deterministic agents. Nothing is sent "
@@ -109,7 +121,8 @@ if st.button("Run research", icon=":material/play_arrow:", type="primary", width
             objectives=[o for o in (objectives_text or "").splitlines() if o.strip()],
             source_preferences=list(prefs or [SourcePreference.WEB, SourcePreference.ACADEMIC]),
             date_from=date_from if use_dates else None, date_to=date_to if use_dates else None, use_llm=use_llm,
-            document_ids=selected_docs, parent_run_id=st.session_state.get("parent_run_id"))
+            document_ids=selected_docs, parent_run_id=st.session_state.get("parent_run_id"),
+            report_format=ReportFormat(report_format))
     except ValidationError as exc:
         for error in exc.errors():
             st.error(error["msg"].removeprefix("Value error, "))

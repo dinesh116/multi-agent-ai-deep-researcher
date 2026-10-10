@@ -90,6 +90,17 @@ START → planner → retriever → source_evaluator → critical_analyst → ga
   marker renders. Invalid markers in LLM prose are removed, and prose that adds numbers not present in the
   evidence is rejected.
 
+## Data richness (v2)
+
+| Stage | Mechanism |
+|---|---|
+| Retrieval | Tavily advanced search with raw content; open-access PDFs (OpenAlex `best_oa_location`, Semantic Scholar `openAccessPdf`, arXiv) fetched through `safe_fetch_pdf` and parsed page by page; OpenAlex citation snowballing (`cites:` / `cited_by:` filters) in follow-up rounds |
+| Extraction | `critical_analyst` reads each source in ~6k-character windows with the fast model and extracts claims, `DataPoint`s and `Entity`s. Quotes are matched word for word; data-point numbers must appear as whole numbers in the quote |
+| Verification | LLM checks each restatement against its quote (`faithful` / `overstated` / `unfaithful`); non-faithful ones fall back to the quote |
+| Agreement | LLM groups claims by proposition with stance (`ClaimGroups`), falling back to lexical clustering. `MatrixRow.strength` = sum over independent source groups of the best quality weight (high 1.0, medium 0.6, low 0.25) |
+| Follow-up | `gap_analyst._strategy_tasks` (LLM, validated) or deterministic gap, source-chasing and entity queries. `UNCHALLENGED` gaps reserve slots for counter-evidence |
+| Reporting | `REPORT_TEMPLATES` selected by `choose_template` (question type or user choice). Sections include key numbers with comparability notes, timeline, verdict (LLM stance classification or strict heuristic), methods table, players and comparison. LLM syntheses are validated (no new numbers; irrelevant citation markers pruned per sentence) |
+
 ## Retrieval choice
 
 BM25 is used for ranking passages, matching claims to subquestions, searching the demo corpus and uploads,

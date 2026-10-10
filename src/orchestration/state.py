@@ -10,8 +10,8 @@ from typing import Annotated, TypedDict
 
 from pydantic import BaseModel, Field
 
-from src.models.evidence import (AgentEvent, AgentStatus, Claim, Contradiction, EvidenceLink, Insight, MatrixRow,
-                                 Passage, Report, ResearchGap, Source, SourceAssessment)
+from src.models.evidence import (AgentEvent, AgentStatus, Claim, Contradiction, DataPoint, Entity, EvidenceLink,
+                                 Insight, MatrixRow, Passage, Report, ResearchGap, Source, SourceAssessment)
 from src.models.research import BudgetUsage, ResearchBudget, ResearchPlan, ResearchRequest, now
 
 
@@ -46,6 +46,8 @@ class ResearchState(TypedDict, total=False):
     passages: list[Passage]
     assessments: dict[str, SourceAssessment]
     claims: list[Claim]
+    data_points: list[DataPoint]
+    entities: list[Entity]
     extracted_source_ids: list[str]
     matrix: list[MatrixRow]
     links: list[EvidenceLink]

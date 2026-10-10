@@ -25,7 +25,7 @@ uv pip install -r requirements.txt    # or: pip install -r requirements.txt
 
 cp .env.example .env                  # optional: add keys for live research (see below)
 streamlit run app.py                  # http://localhost:8501
-pytest                                # 87 tests, offline, no API keys needed
+pytest                                # 111 tests, offline, no API keys needed
 ```
 
 **From VS Code:** open this folder, select the `.venv` interpreter, then use **Run and Debug → "Deep Researcher AI
@@ -53,7 +53,9 @@ Edit `.env` (never committed):
 | Variable | Purpose |
 |---|---|
 | `OPENROUTER_API_KEY` | Enables LLM features. Without it, agents run deterministically. |
-| `OPENROUTER_MODEL` | Default `openai/gpt-4o-mini`; any OpenRouter model with JSON output. Can be overridden on the Settings page. |
+| `OPENROUTER_MODEL` | Main model for planning, research strategy and synthesis (default `openai/gpt-4o-mini`). Can be overridden on the Settings page. |
+| `OPENROUTER_FAST_MODEL` | Optional cheaper model for high-volume extraction and checks (defaults to the main model). A good split is `openai/gpt-4o` (main) with `openai/gpt-4o-mini` (fast). |
+| `SEMANTIC_SCHOLAR_API_KEY` | Optional free key. Without it, Semantic Scholar's shared rate limit often returns HTTP 429; the run continues without it. |
 | `OPENROUTER_BASE_URL` | Default `https://openrouter.ai/api/v1` |
 | `TAVILY_API_KEY` | Enables live web and news search (<https://tavily.com>) |
 | `CONTACT_EMAIL` | Sent to OpenAlex/Crossref for polite API use (recommended) |
@@ -62,6 +64,28 @@ Edit `.env` (never committed):
 OpenRouter only handles language tasks. It is **not** used for web search; source discovery is done by the search
 providers, which you can toggle on the **Settings** page. Without Tavily, live mode still searches the academic
 sources and your uploads, and says so in the run log.
+
+## What makes the research data-rich
+
+- **Full texts, not snippets:** Tavily advanced search returns the page content. Open-access PDFs (from OpenAlex,
+  Semantic Scholar and arXiv) are downloaded and read page by page. The cap is 4, 10 or 20 per round, by depth.
+- **More sources and citations:** Semantic Scholar (citation counts, TLDRs) plus **citation snowballing** through
+  OpenAlex. In follow-up rounds, the most-cited references of, and citations to, the most relevant papers are added.
+- **Structured extraction:** whole documents are read in windows. Claims, **quantitative data points** (measure,
+  value, unit, population, period, method) and **named entities** are extracted. Every quote must appear word for
+  word in the source.
+- **Meaning-based agreement:** the LLM groups claims by proposition, so paraphrased corroboration counts. Restatements
+  are checked against their quotes, and agreement is **weighted by source quality**.
+- **Adaptive follow-up:** the LLM plans the next round from the findings (chasing original sources, resolving
+  contradictions, researching recurring entities). Strong findings always get a counter-evidence search.
+- **Adaptive reports:** the format follows the question: *Outlook* (forward-looking), *Evidence assessment* (verdict,
+  evidence for and against), *Literature review* (methods and results, open problems) or *Landscape* (key players,
+  comparison). *Executive brief* and *Full report* can be chosen manually. Reports include key-number tables,
+  comparability notes, timelines and per-subquestion syntheses.
+- **Two models:** a strong model for planning, strategy and writing, and a fast model for extraction.
+
+A *Quick* live run takes about 1.5 minutes and uses about 30 LLM calls (about 70k tokens) and 6–14 searches. *Standard*
+and *Deep* use proportionally more; hard caps are shown before each run.
 
 ## The pages
 
@@ -111,7 +135,7 @@ docs/architecture.md
 
 ## Testing
 
-`pytest` runs 87 tests offline. An autouse fixture **fails any test that touches the network**; providers use
+`pytest` runs 111 tests offline. An autouse fixture **fails any test that touches the network**; providers use
 `httpx.MockTransport`, and the LLM is a fake OpenAI client. The tests cover question validation, plan
 generation and schema, provider parsing (Tavily, OpenAlex, Crossref, arXiv), retries and rate limits, SSRF
 blocking, document extraction, normalisation and dedup, syndication, claims and verbatim-quote validation, the

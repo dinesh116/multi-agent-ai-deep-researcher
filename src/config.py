@@ -24,7 +24,7 @@ def _env(name: str, default: str | None = None) -> str | None:
 @dataclass(frozen=True)
 class Settings:
     openrouter_api_key: str | None
-    openrouter_model: str
+    openrouter_model: str  # strong model: planning, follow-up strategy, synthesis, report prose
     openrouter_base_url: str
     tavily_api_key: str | None
     contact_email: str | None
@@ -32,6 +32,12 @@ class Settings:
     http_timeout: float
     llm_timeout: float
     max_upload_mb: int
+    openrouter_fast_model: str | None = None  # cheap model for high-volume extraction (defaults to the main model)
+    semantic_scholar_api_key: str | None = None
+
+    @property
+    def fast_model(self) -> str:
+        return self.openrouter_fast_model or self.openrouter_model
 
     @property
     def llm_configured(self) -> bool:
@@ -66,4 +72,6 @@ def get_settings() -> Settings:
         http_timeout=float(_env("HTTP_TIMEOUT_SECONDS", "20")),
         llm_timeout=float(_env("LLM_TIMEOUT_SECONDS", "60")),
         max_upload_mb=int(_env("MAX_UPLOAD_MB", "15")),
+        openrouter_fast_model=_env("OPENROUTER_FAST_MODEL"),
+        semantic_scholar_api_key=_env("SEMANTIC_SCHOLAR_API_KEY"),
     )

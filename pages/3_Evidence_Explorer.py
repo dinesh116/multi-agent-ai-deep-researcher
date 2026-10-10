@@ -94,6 +94,19 @@ for source in sorted(sources, key=keyfn):
             st.caption("References found inside: " + ", ".join(source.references_found[:6]))
         if not source.full_text_available:
             st.caption("Only a snippet or abstract was retrieved; the full text was not reviewed.")
+        elif source.metadata.get("full_text_via"):
+            st.caption(f"Full text reviewed (via {source.metadata['full_text_via']}).")
+        if source.metadata.get("snowball"):
+            seed = bundle.source(source.metadata["snowball"]["seed"])
+            st.caption(f"Found by citation snowballing ({source.metadata['snowball']['direction'].replace('_', ' ')}) "
+                       f"from '{seed.title[:80] if seed else 'another source'}'.")
+        points = [d for d in bundle.data_points if d.source_id == source.id]
+        if points:
+            st.markdown("**Data points**")
+            for d in points[:10]:
+                st.markdown(f"- **{d.value_text}** {d.metric}" + (f" · {d.subject}" if d.subject else "")
+                            + (f" · {d.method}" if d.method else "") + f"  \n  <span class='dr-muted'>{d.quote[:240]}</span>",
+                            unsafe_allow_html=True)
         st.markdown("**Extracted passages**")
         for passage in bundle.passages_for(source.id)[:6]:
             st.markdown(f"> {passage.text[:900]}\n\n<span class='dr-muted'>{passage.location}</span>", unsafe_allow_html=True)

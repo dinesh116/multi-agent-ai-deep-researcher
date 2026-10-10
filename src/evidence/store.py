@@ -127,15 +127,24 @@ class EvidenceStore:
                 new.related_ids.append(other.id)
                 other.related_ids.append(new.id)
 
-    def replace_content(self, source_id: str, full_text: str) -> None:
+    def replace_content(self, source_id: str, full_text: str, via: str = "web page") -> None:
         """Swap a snippet for fetched full text (web pages)."""
+        self.replace_sections(source_id, [("full text", full_text)], via)
+
+    def replace_sections(self, source_id: str, sections: list[tuple[str, str]], via: str) -> None:
+        """Swap a snippet/abstract for full text, keeping page/section locations (e.g. open-access PDFs)."""
         source = self.sources[source_id]
+        full_text = "\n\n".join(t for _, t in sections)
+        abstract = source.content
         source.content, source.full_text_available = full_text, True
-        source.limitations = [l for l in source.limitations if "snippet" not in l.lower()]
-        source.references_found = list(dict.fromkeys(source.references_found + find_references(full_text)))
+        source.metadata["full_text_via"] = via
+        source.limitations = [l for l in source.limitations if "snippet" not in l.lower() and "abstract only" not in l.lower()
+                              and "metadata only" not in l.lower()]
+        source.references_found = list(dict.fromkeys(source.references_found + find_references(full_text)))[:40]
         if INJECTION_PATTERNS.search(full_text) and not any("instruction-like" in l for l in source.limitations):
             source.limitations.append("Contains instruction-like text aimed at AI systems; treated strictly as data.")
-        self.passages[source_id] = chunk_sections(source_id, [("full text", full_text)])
+        keep = [("abstract", abstract)] if abstract and abstract not in full_text[:5000] else []
+        self.passages[source_id] = chunk_sections(source_id, keep + sections)
 
     # ------------------------------------------------------------------ ranking
     def all_passages(self) -> list[Passage]:

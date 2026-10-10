@@ -23,8 +23,13 @@ def get_repo() -> Repository:
 def effective_settings() -> Settings:
     """Environment settings plus the user's non-secret overrides (e.g. model name)."""
     settings = get_settings()
-    model = get_repo().get_setting("llm_model")
-    return dataclasses.replace(settings, openrouter_model=model) if model else settings
+    repo = get_repo()
+    model, fast = repo.get_setting("llm_model"), repo.get_setting("llm_fast_model")
+    if model:
+        settings = dataclasses.replace(settings, openrouter_model=model)
+    if fast:
+        settings = dataclasses.replace(settings, openrouter_fast_model=fast)
+    return settings
 
 
 def provider_settings() -> ProviderSettings:
@@ -91,8 +96,10 @@ def sidebar() -> None:
                     f'<span class="dr-cap-k">{label}</span><span class="dr-cap-v">{value}</span></div>')
         st.markdown(
             row("LLM", settings.llm_configured, settings.openrouter_model if settings.llm_configured else "not configured")
+            + (row("Fast LLM", True, settings.fast_model) if settings.llm_configured and
+               settings.fast_model != settings.openrouter_model else "")
             + row("Web search", settings.web_search_configured, "Tavily" if settings.web_search_configured else "not configured")
-            + row("Academic", True, "OpenAlex · Crossref · arXiv")
+            + row("Academic", True, "OpenAlex · Semantic Scholar · arXiv · Crossref")
             + row("Demo corpus", True, "offline · synthetic"), unsafe_allow_html=True)
         with st.expander("Data & safety", icon=":material/lock:"):
             st.markdown(

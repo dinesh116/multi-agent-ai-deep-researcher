@@ -23,6 +23,7 @@ T = TypeVar("T")
 
 TRANSIENT_STATUS = {408, 425, 429, 500, 502, 503, 504}
 MAX_FETCH_BYTES = 3 * 1024 * 1024
+MAX_PDF_BYTES = 15 * 1024 * 1024
 
 
 def with_retries(fn: Callable[[], T], attempts: int = 3, base_delay: float = 1.0,
@@ -75,8 +76,9 @@ class HttpClient:
             return response.text
         return with_retries(call)
 
-    def safe_fetch(self, url: str, max_redirects: int = 3) -> str | None:
-        """Fetch a public web page's HTML. Returns None (never raises) when blocked or unavailable."""
+    def safe_get(self, url: str, allowed: tuple[str, ...], max_bytes: int = MAX_FETCH_BYTES,
+                 max_redirects: int = 4) -> tuple[str, bytes] | None:
+        """GET a public URL; returns (content type, body) or None. Every redirect hop is re-checked."""
         for _ in range(max_redirects + 1):
             if not is_public_http_url(url):
                 logger.info("Blocked non-public URL")
@@ -88,19 +90,34 @@ class HttpClient:
                         continue
                     if response.status_code != 200:
                         return None
-                    ctype = response.headers.get("content-type", "")
-                    if "html" not in ctype and "text/plain" not in ctype:
+                    ctype = response.headers.get("content-type", "").lower()
+                    if not any(kind in ctype for kind in allowed):
                         return None
                     chunks, size = [], 0
                     for chunk in response.iter_bytes():
                         size += len(chunk)
-                        if size > MAX_FETCH_BYTES:
-                            break
+                        if size > max_bytes:
+                            return None  # too large: never analyse a partial download as if it were complete
                         chunks.append(chunk)
-                    return b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
+                    return ctype, b"".join(chunks)
             except (httpx.HTTPError, ValueError):
                 return None
         return None
+
+    def safe_fetch(self, url: str) -> str | None:
+        """Fetch a public web page's HTML. Returns None (never raises) when blocked or unavailable."""
+        result = self.safe_get(url, ("html", "text/plain"))
+        if not result:
+            return None
+        _, body = result
+        return body.decode("utf-8", errors="replace")
+
+    def safe_fetch_pdf(self, url: str) -> bytes | None:
+        """Fetch an open-access PDF (public hosts only, size-capped). Returns None when unavailable."""
+        result = self.safe_get(url, ("pdf", "octet-stream"), max_bytes=MAX_PDF_BYTES)
+        if not result or not result[1].startswith(b"%PDF"):
+            return None
+        return result[1]
 
 
 def is_public_http_url(url: str) -> bool:

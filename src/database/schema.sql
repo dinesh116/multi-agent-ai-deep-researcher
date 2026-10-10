@@ -105,6 +105,24 @@ CREATE TABLE IF NOT EXISTS insights (
     PRIMARY KEY (run_id, id)
 );
 
+CREATE TABLE IF NOT EXISTS data_points (
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    data TEXT NOT NULL,
+    PRIMARY KEY (run_id, id)
+);
+
+CREATE TABLE IF NOT EXISTS entities (
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    data TEXT NOT NULL,
+    PRIMARY KEY (run_id, id)
+);
+
 CREATE TABLE IF NOT EXISTS reports (
     run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
     title TEXT NOT NULL,

@@ -76,9 +76,10 @@ def test_stale_runs_documents_cache_and_settings(repo, demo_request):
 def test_report_structure_and_citations(stored_run):
     _, bundle = stored_run
     report = bundle.report
+    from src.agents.report_builder import REPORT_TEMPLATES
     keys = [s.key for s in report.sections]
-    assert keys == ["scope", "executive_summary", "key_findings", "detailed_analysis", "evidence", "trends",
-                    "implications", "risks", "next_steps", "limitations", "references"]
+    assert report.template == "outlook"  # forward-looking question -> outlook template
+    assert keys == REPORT_TEMPLATES["outlook"][1]
     assert report.references and all(r["synthetic"] for r in report.references)
     assert report.citation_checks and all(c.valid for c in report.citation_checks)
     assert "synthetic demo data" in report.section("limitations").content
@@ -90,7 +91,8 @@ def test_report_structure_and_citations(stored_run):
 def test_report_exports(stored_run):
     _, bundle = stored_run
     md = to_markdown(bundle.report, demo=True)
-    assert md.startswith("# Research report") and "SYNTHETIC DEMO REPORT" in md and "## References" in md
+    assert md.startswith("# Outlook report:") and "SYNTHETIC DEMO REPORT" in md and "## References" in md
+    assert "## Key numbers" in md and "## Timeline of events and forecasts" in md
     html = to_html(bundle.report, demo=True)
     assert html.startswith("<!doctype html>") and "<h2>Executive summary</h2>" in html
     pdf = to_pdf(bundle.report, demo=True)
@@ -172,13 +174,12 @@ def test_untrusted_wrapping_and_policy():
 
 def test_llm_prompts_wrap_source_content(settings):
     """Claim extraction must pass source text only inside untrusted tags."""
-    client, completions = fake_openai(['{"claims": []}'] * 10 + ['{"insights": []}', '{"verdicts": []}',
-                                                                 '{"executive_summary": "x", "detailed_analysis": "y"}'])
+    client, completions = fake_openai(['{"claims": [], "data_points": [], "entities": []}'] * 30)
     provider = FakeProvider(results=[make_result("Agentic AI in enterprise software",
                                                  "Agentic AI improves enterprise software productivity by 14% in a field study. " * 3)])
     request = live_request(use_llm=True)
     run_research(request, settings, today=TODAY, providers=provider_set(provider), llm=LLMClient(settings, client=client))
-    extraction = [p for p in completions.prompts if "Extract up to 6" in p]
+    extraction = [p for p in completions.prompts if "From the source text below" in p]
     assert extraction and all("<untrusted_source" in p for p in extraction)
 
 

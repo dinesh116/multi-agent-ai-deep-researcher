@@ -43,23 +43,35 @@ class ResearchBudget(BaseModel):
     max_iterations: int = Field(2, ge=1, le=6)  # follow-up research rounds after the initial one
     max_searches: int = Field(24, ge=1, le=200)
     max_sources: int = Field(30, ge=1, le=300)
-    max_seconds: int = Field(240, ge=10, le=3600)
+    max_seconds: int = Field(360, ge=10, le=3600)
     max_llm_calls: int = Field(40, ge=0, le=500)
     max_llm_tokens: int = Field(200_000, ge=0, le=5_000_000)
     min_sources_per_subquestion: int = Field(2, ge=1, le=10)
 
 
+# Per-depth knobs. Larger budgets plus full-text fetching are what make reports data-rich; the hard caps keep
+# every run bounded (cost and time).
 DEPTH_PRESETS: dict[Depth, dict] = {
-    Depth.QUICK: dict(subquestions=4, queries_per_subquestion=1, results_per_search=4,
-                      budget=ResearchBudget(max_iterations=1, max_searches=10, max_sources=15, max_seconds=120,
-                                            max_llm_calls=20)),
-    Depth.STANDARD: dict(subquestions=5, queries_per_subquestion=2, results_per_search=5,
-                         budget=ResearchBudget(max_iterations=2, max_searches=24, max_sources=30, max_seconds=240,
-                                               max_llm_calls=40)),
-    Depth.DEEP: dict(subquestions=7, queries_per_subquestion=2, results_per_search=6,
-                     budget=ResearchBudget(max_iterations=3, max_searches=48, max_sources=60, max_seconds=480,
-                                           max_llm_calls=80, max_llm_tokens=400_000)),
+    Depth.QUICK: dict(subquestions=4, queries_per_subquestion=1, results_per_search=5, full_text_fetches=4,
+                      llm_windows_per_source=1, claims_per_source=8, snowball_per_round=2,
+                      budget=ResearchBudget(max_iterations=1, max_searches=14, max_sources=20, max_seconds=180,
+                                            max_llm_calls=30, max_llm_tokens=300_000)),
+    Depth.STANDARD: dict(subquestions=5, queries_per_subquestion=2, results_per_search=6, full_text_fetches=10,
+                         llm_windows_per_source=2, claims_per_source=10, snowball_per_round=4,
+                         budget=ResearchBudget(max_iterations=2, max_searches=36, max_sources=45, max_seconds=360,
+                                               max_llm_calls=90, max_llm_tokens=700_000)),
+    Depth.DEEP: dict(subquestions=7, queries_per_subquestion=2, results_per_search=8, full_text_fetches=20,
+                     llm_windows_per_source=3, claims_per_source=14, snowball_per_round=6,
+                     budget=ResearchBudget(max_iterations=3, max_searches=80, max_sources=90, max_seconds=900,
+                                           max_llm_calls=200, max_llm_tokens=1_600_000)),
 }
+
+
+class ReportFormat(StrEnum):
+    AUTO = "auto"  # template chosen from the question type
+    BRIEF = "brief"  # executive brief
+    FULL = "full"  # every section
+
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -79,6 +91,7 @@ class ResearchRequest(BaseModel):
     use_llm: bool = True
     document_ids: list[str] = Field(default_factory=list)  # uploaded documents to include
     parent_run_id: str | None = None  # set when refining a previous investigation
+    report_format: ReportFormat = ReportFormat.AUTO
 
     @field_validator("question")
     @classmethod

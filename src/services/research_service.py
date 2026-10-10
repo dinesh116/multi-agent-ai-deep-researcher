@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 def initial_state(request: ResearchRequest, run_id: str) -> ResearchState:
     return ResearchState(
         run_id=run_id, request=request, budget=request.budget(), plan=None, iteration=0, pending_queries=[],
-        searched_queries=[], sources=[], passages=[], assessments={}, claims=[], extracted_source_ids=[], matrix=[],
+        searched_queries=[], sources=[], passages=[], assessments={}, claims=[], data_points=[], entities=[],
+        extracted_source_ids=[], matrix=[],
         links=[], contradictions=[], gaps=[], insights=[], report=None,
         statuses={a: AgentStatus(agent=a) for a in AGENT_ORDER}, route="", route_reason="", stop_reason="",
         new_sources_last_iteration=0, provider_notes=[], events=[], search_log=[], warnings=[], errors=[])

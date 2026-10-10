@@ -7,6 +7,7 @@ import streamlit as st
 from src.agents.qa import answer_question
 from src.reporting.render import to_html, to_markdown, to_pdf
 from src.services.llm import LLMClient
+from src.ui import charts
 from src.ui.components import demo_banner, page_header
 from src.ui.state import effective_settings, get_repo, preference, require_run
 
@@ -44,7 +45,8 @@ if e4.button("Refine investigation", icon=":material/replay:", width="stretch"):
     st.switch_page("pages/1_Research_Workspace.py")
 
 st.header(report.title)
-st.caption(f"Generated {report.created_at:%d %b %Y %H:%M} · {report.generated_by} · {len(report.references)} references")
+st.caption(f"Generated {report.created_at:%d %b %Y %H:%M} · {report.generated_by} · format: {report.template.replace('_', ' ')} · "
+           f"{len(report.references)} references · {len(bundle.data_points)} data points")
 toc = [s for s in report.sections]
 with st.expander("Contents"):
     st.markdown("\n".join(f"{i}. {s.title}" for i, s in enumerate(toc, start=1)))
@@ -60,6 +62,10 @@ for section in report.sections:
             st.markdown(line + f"  \n<span class='dr-muted'>{' · '.join(tags)}</span>", unsafe_allow_html=True)
     else:
         st.markdown(section.content)
+        if section.key == "key_numbers":
+            chart = charts.data_points_bar(bundle.data_points, {r["source_id"]: r["n"] for r in report.references})
+            if chart:
+                st.plotly_chart(chart, width="stretch")
 
 checks = report.citation_checks
 with st.expander(f"Citation traceability: {sum(c.valid for c in checks)}/{len(checks)} citations passed"):

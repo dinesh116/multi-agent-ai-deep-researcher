@@ -13,8 +13,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from src.models.evidence import (AgentEvent, AgentStatus, Claim, Contradiction, EvidenceLink, Insight, MatrixRow,
-                                 Passage, Report, ResearchGap, Source, SourceAssessment)
+from src.models.evidence import (AgentEvent, AgentStatus, Claim, Contradiction, DataPoint, Entity, EvidenceLink,
+                                 Insight, MatrixRow, Passage, Report, ResearchGap, Source, SourceAssessment)
 from src.models.research import BudgetUsage, ResearchPlan, ResearchRequest, new_id, now
 from src.models.run import RunBundle, RunSummary
 
@@ -55,6 +55,7 @@ class Repository:
         report: Report | None = state.get("report")
         exec_summary = report.section("executive_summary").content if report and report.section("executive_summary") else ""
         counts = {"sources": len(state.get("sources", [])), "claims": len(state.get("claims", [])),
+                  "data_points": len(state.get("data_points", [])),
                   "contradictions": len(state.get("contradictions", [])), "insights": len(state.get("insights", [])),
                   "iterations": state.get("iteration", 0) + 1, "gaps": len(state.get("gaps", []))}
         with self._connect() as conn:
@@ -74,7 +75,8 @@ class Repository:
                  json.dumps(state.get("errors", [])), json.dumps(state.get("provider_notes", [])), json.dumps(counts),
                  run_id))
             for table in ("sources", "passages", "assessments", "claims", "matrix_rows", "evidence_links",
-                          "contradictions", "gaps", "insights", "reports", "events", "search_log"):
+                          "contradictions", "gaps", "insights", "reports", "events", "search_log", "data_points",
+                          "entities"):
                 conn.execute(f"DELETE FROM {table} WHERE run_id = ?", (run_id,))
             conn.executemany("INSERT OR IGNORE INTO sources VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
                 (run_id, s.id, s.title, s.url, s.source_type.value, s.origin.value,
@@ -96,6 +98,10 @@ class Repository:
                 (run_id, g.id, _dump(g)) for g in state.get("gaps", [])])
             conn.executemany("INSERT OR IGNORE INTO insights VALUES (?, ?, ?, ?, ?)", [
                 (run_id, i.id, i.kind.value, i.label.value, _dump(i)) for i in state.get("insights", [])])
+            conn.executemany("INSERT OR IGNORE INTO data_points VALUES (?, ?, ?, ?, ?)", [
+                (run_id, d.id, d.source_id, d.metric, _dump(d)) for d in state.get("data_points", [])])
+            conn.executemany("INSERT OR IGNORE INTO entities VALUES (?, ?, ?, ?, ?)", [
+                (run_id, e.id, e.name, e.kind, _dump(e)) for e in state.get("entities", [])])
             if report:
                 conn.execute("INSERT INTO reports VALUES (?, ?, ?, ?)",
                              (run_id, report.title, _dump(report), report.created_at.isoformat()))
@@ -143,6 +149,8 @@ class Repository:
                 gaps=[ResearchGap.model_validate_json(d) for d in rows("gaps")],
                 insights=[Insight.model_validate_json(d) for d in rows("insights")],
                 report=Report.model_validate_json(report_row["data"]) if report_row else None,
+                data_points=[DataPoint.model_validate_json(d) for d in rows("data_points")],
+                entities=[Entity.model_validate_json(d) for d in rows("entities")],
                 events=[AgentEvent.model_validate_json(d) for d in rows("events", "seq")],
                 search_log=[json.loads(d) for d in rows("search_log", "seq")],
                 warnings=json.loads(run["warnings"] or "[]"), errors=json.loads(run["errors"] or "[]"),

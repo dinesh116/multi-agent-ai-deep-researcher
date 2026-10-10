@@ -25,10 +25,14 @@ st.subheader("LLM")
 with st.form("llm"):
     st.text_input("Provider endpoint", value=env.openrouter_base_url, disabled=True,
                   help="Set OPENROUTER_BASE_URL in .env to change it.")
-    model = st.text_input("Model (OpenRouter id)", value=settings.openrouter_model,
-                          help="Any OpenRouter model that supports JSON output, e.g. openai/gpt-4o-mini.")
-    if st.form_submit_button("Save model"):
+    model = st.text_input("Main model (planning, research strategy, synthesis)", value=settings.openrouter_model,
+                          help="Any OpenRouter model that supports JSON output, e.g. openai/gpt-4o.")
+    fast = st.text_input("Fast model (high-volume extraction and checks)", value=settings.fast_model,
+                         help="A cheaper model used for claim/number/entity extraction and verification, "
+                              "e.g. openai/gpt-4o-mini. Set it to the same id to use one model for everything.")
+    if st.form_submit_button("Save models"):
         repo.set_setting("llm_model", model.strip() or env.openrouter_model)
+        repo.set_setting("llm_fast_model", fast.strip() or model.strip() or env.openrouter_model)
         st.success("Saved.")
 st.caption("OpenRouter is used only for language tasks. It does not perform web searches; source discovery is "
            "handled separately by the search providers below.")
@@ -38,12 +42,17 @@ current = provider_settings()
 with st.form("providers"):
     tavily = st.checkbox("Tavily web & news search", value=current.tavily, disabled=not env.web_search_configured,
                          help=None if env.web_search_configured else "Requires TAVILY_API_KEY")
-    openalex = st.checkbox("OpenAlex (scholarly works)", value=current.openalex)
+    advanced = st.checkbox("Tavily advanced search with full page content (≈2 credits per search)",
+                           value=current.tavily_advanced, disabled=not env.web_search_configured)
+    openalex = st.checkbox("OpenAlex (scholarly works, citation snowballing)", value=current.openalex)
+    semantic = st.checkbox("Semantic Scholar (citations, TLDRs, open-access PDFs)", value=current.semantic_scholar)
     crossref = st.checkbox("Crossref (DOI metadata, lead resolution)", value=current.crossref)
     arxiv = st.checkbox("arXiv (preprints)", value=current.arxiv)
-    fetch = st.checkbox("Fetch full text of web results (bounded, public pages only)", value=current.fetch_full_text)
+    fetch = st.checkbox("Fetch full texts: web pages and open-access PDFs (bounded, public hosts only)",
+                        value=current.fetch_full_text)
     if st.form_submit_button("Save providers"):
-        repo.set_setting("providers", {"tavily": tavily, "openalex": openalex, "crossref": crossref, "arxiv": arxiv,
+        repo.set_setting("providers", {"tavily": tavily, "tavily_advanced": advanced, "openalex": openalex,
+                                       "semantic_scholar": semantic, "crossref": crossref, "arxiv": arxiv,
                                        "fetch_full_text": fetch})
         st.success("Saved.")
 st.caption("Demo mode always uses the offline synthetic corpus, whatever the settings here.")
@@ -60,7 +69,8 @@ with st.form("defaults"):
         st.success("Saved.")
 st.dataframe(pd.DataFrame([{
     "Depth": d.value, "Subquestions": p["subquestions"], "Queries / subquestion": p["queries_per_subquestion"],
-    "Results / search": p["results_per_search"], "Max searches": p["budget"].max_searches,
+    "Results / search": p["results_per_search"], "Full texts / round": p["full_text_fetches"],
+    "LLM windows / source": p["llm_windows_per_source"], "Max searches": p["budget"].max_searches,
     "Max sources": p["budget"].max_sources, "Max seconds": p["budget"].max_seconds,
     "Max LLM calls": p["budget"].max_llm_calls, "Max LLM tokens": p["budget"].max_llm_tokens}
     for d, p in DEPTH_PRESETS.items()]), hide_index=True, width="stretch")

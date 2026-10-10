@@ -46,7 +46,8 @@ class LLMUnavailable(RuntimeError):
 
 class LLMClient:
     def __init__(self, settings: Settings, client=None, sleep=time.sleep):
-        self.model = settings.openrouter_model
+        self.model = settings.openrouter_model  # strong model: planning, strategy, synthesis
+        self.fast_model = settings.fast_model  # cheap model: high-volume extraction and checks
         self.sleep = sleep
         self._client = client
         if client is None and settings.openrouter_api_key:
@@ -61,7 +62,7 @@ class LLMClient:
         return self._client is not None
 
     def complete(self, prompt: str, budget: RunBudget, system: str = SYSTEM_POLICY, max_tokens: int = 1500,
-                 temperature: float = 0.2, json_mode: bool = True, attempts: int = 3) -> str:
+                 temperature: float = 0.2, json_mode: bool = True, attempts: int = 3, fast: bool = False) -> str:
         if not self._client:
             raise LLMUnavailable("OPENROUTER_API_KEY is not configured.")
         if not budget.try_llm():
@@ -71,7 +72,7 @@ class LLMClient:
         for attempt in range(1, attempts + 1):
             try:
                 response = self._client.chat.completions.create(
-                    model=self.model, temperature=temperature, max_tokens=max_tokens,
+                    model=self.fast_model if fast else self.model, temperature=temperature, max_tokens=max_tokens,
                     messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}], **kwargs)
                 usage = getattr(response, "usage", None)
                 budget.record_tokens(getattr(usage, "total_tokens", 0) if usage else len(prompt) // 4)
@@ -87,14 +88,15 @@ class LLMClient:
         logger.warning("LLM call failed: %s", type(last).__name__)
         raise LLMUnavailable(f"LLM call failed ({type(last).__name__}).") from last
 
-    def structured(self, prompt: str, schema: type[M], budget: RunBudget, max_tokens: int = 1800) -> M | None:
+    def structured(self, prompt: str, schema: type[M], budget: RunBudget, max_tokens: int = 1800,
+                   fast: bool = False) -> M | None:
         """JSON completion validated against a Pydantic schema. Returns None on any failure."""
         keys = ", ".join(schema.model_fields)
         instruction = (f"\n\nReturn ONE JSON object whose top-level keys are exactly: {keys}. Fill it with your answer; "
                        "do not repeat or describe the schema. For reference, the value types are defined by this JSON "
                        "schema:\n" + json.dumps(schema.model_json_schema())[:5000])
         try:
-            text = self.complete(prompt + instruction, budget, max_tokens=max_tokens)
+            text = self.complete(prompt + instruction, budget, max_tokens=max_tokens, fast=fast)
         except LLMUnavailable:
             return None
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())

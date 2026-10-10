@@ -16,7 +16,7 @@ from src.models.evidence import Claim, ClaimType, Passage, Source
 from src.models.research import ResearchPlan
 from src.retrieval.bm25 import BM25Index
 
-MAX_CLAIMS_PER_SOURCE = 6
+MAX_CLAIMS_PER_SOURCE = 10  # default; depth presets override this
 
 
 def classify_claim(sentence: str) -> ClaimType:
@@ -34,7 +34,8 @@ def claim_id(source_id: str, quote: str) -> str:
 
 
 def _norm(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip().lower()
+    """Words only: quotes must match the source word for word, but markdown, punctuation and line breaks are ignored."""
+    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
 
 
 PERSPECTIVE_VOCAB = {
@@ -69,7 +70,7 @@ class SubquestionMatcher:
 
 
 def heuristic_claims(source: Source, passages: list[Passage], plan: ResearchPlan,
-                     matcher: SubquestionMatcher) -> list[Claim]:
+                     matcher: SubquestionMatcher, limit: int = MAX_CLAIMS_PER_SOURCE) -> list[Claim]:
     """Sentences that assert something checkable (numbers, findings, forecasts), ranked by relevance."""
     candidates: list[tuple[Passage, str]] = []
     for passage in passages:
@@ -85,7 +86,7 @@ def heuristic_claims(source: Source, passages: list[Passage], plan: ResearchPlan
     query = plan.question + " " + " ".join(s.text + " " + " ".join(s.queries) for s in plan.subquestions)
     scores = {id(c): score for c, score in BM25Index(candidates, lambda c: c[1]).search(query, k=len(candidates))}
     order = {id(c): i for i, c in enumerate(candidates)}
-    chosen = sorted(candidates, key=lambda c: (-scores.get(id(c), 0.0), order[id(c)]))[:MAX_CLAIMS_PER_SOURCE]
+    chosen = sorted(candidates, key=lambda c: (-scores.get(id(c), 0.0), order[id(c)]))[:limit]
     claims = []
     for passage, sentence in sorted(chosen, key=lambda c: order[id(c)]):
         claims.append(Claim(
@@ -103,7 +104,31 @@ class ClaimDraft(BaseModel):
 
 
 class ClaimDraftList(BaseModel):
-    claims: list[ClaimDraft] = Field(default_factory=list, max_length=10)
+    claims: list[ClaimDraft] = Field(default_factory=list, max_length=16)
+
+
+class DataPointDraft(BaseModel):
+    quote: str = Field(description="Exact sentence containing the number, copied from the source text")
+    metric: str = Field(description="What is measured, e.g. 'enterprises with AI agents in production'")
+    value_text: str = Field(description="The number as written, e.g. '38%', '$1.2 billion', '3.2 times'")
+    unit: str = Field("", description="%, USD, x, count, months, ...")
+    kind: str = Field("level", description="level (a state) or change (an increase/decrease)")
+    subject: str = Field("", description="Population or sample, e.g. '1,200 enterprises'")
+    period: str = Field("", description="Year or period the number refers to")
+    method: str = Field("", description="How it was measured: survey, benchmark, experiment, internal analysis...")
+
+
+class EntityDraft(BaseModel):
+    name: str
+    kind: str = Field("named_entity", description="company | product | technology | regulation | organisation")
+
+
+class ExtractionDraft(BaseModel):
+    """One LLM pass over a window of a source: claims, quantitative data points and named entities."""
+
+    claims: list[ClaimDraft] = Field(default_factory=list, max_length=16)
+    data_points: list[DataPointDraft] = Field(default_factory=list, max_length=16)
+    entities: list[EntityDraft] = Field(default_factory=list, max_length=20)
 
 
 def validate_llm_claims(drafts: ClaimDraftList, source: Source, passages: list[Passage],
@@ -125,4 +150,29 @@ def validate_llm_claims(drafts: ClaimDraftList, source: Source, passages: list[P
             polarity=-1 if draft.sceptical else polarity(quote), source_id=source.id, passage_id=passage.id,
             location=passage.location, subquestion_id=matcher.best(quote + " " + draft.claim, source.subquestion_ids),
             extracted_by="llm"))
-    return accepted[:MAX_CLAIMS_PER_SOURCE + 2], rejected
+    return accepted, rejected
+
+
+def validate_llm_data_points(drafts: list[DataPointDraft], source: Source, passages: list[Passage]) -> tuple[list, int]:
+    """Accept data points whose quote is verbatim in a passage and whose number appears in that quote."""
+    from src.analysis.datapoints import _id, parse_value
+    from src.models.evidence import DataPoint
+
+    accepted, rejected = [], 0
+    for draft in drafts:
+        quote = draft.quote.strip().strip('"“”')
+        passage = next((p for p in passages if len(quote) >= 20 and _norm(quote) in _norm(p.text)), None)
+        number = re.search(r"\d[\d,.]*", draft.value_text or "")
+        digits = number.group(0).rstrip(".,") if number else ""
+        # the number must appear as a whole number in the quote ("2" must not match "2020")
+        whole = bool(digits) and re.search(rf"(?<![\d.,]){re.escape(digits)}(?![\d]|[.,]\d)", quote)
+        if passage is None or not whole or INJECTION_PATTERNS.search(quote):
+            rejected += 1
+            continue
+        accepted.append(DataPoint(
+            id=_id("dp", source.id, quote, draft.value_text), metric=draft.metric.strip()[:90] or "unspecified",
+            value=parse_value(draft.value_text), value_text=draft.value_text.strip()[:40], unit=draft.unit.strip()[:20],
+            kind="change" if draft.kind.lower().startswith("change") else "level", subject=draft.subject.strip()[:80],
+            period=draft.period.strip()[:30], method=draft.method.strip()[:60], source_id=source.id,
+            passage_id=passage.id, quote=quote, location=passage.location, extracted_by="llm"))
+    return accepted, rejected

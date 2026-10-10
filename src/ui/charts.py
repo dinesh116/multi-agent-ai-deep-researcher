@@ -57,3 +57,18 @@ def flags_bar(assessments) -> go.Figure:
     fig = go.Figure(go.Bar(y=list(counts), x=list(counts.values()), orientation="h", marker_color="#dc2626"))
     fig.update_xaxes(title="sources")
     return _layout(fig, 260)
+
+
+def data_points_bar(points, ref_numbers: dict[str, int], limit: int = 12) -> go.Figure | None:
+    """Percentages from the evidence, labelled with their measure and citation (display only)."""
+    pct = [p for p in points if p.unit == "%" and p.value is not None][:limit]
+    if len(pct) < 2:
+        return None
+    labels = [f"{p.metric[:48]}{' [' + str(ref_numbers[p.source_id]) + ']' if p.source_id in ref_numbers else ''}" for p in pct]
+    fig = go.Figure(go.Bar(x=[p.value for p in pct], y=labels, orientation="h",
+                           marker_color=["#2f45e8" if p.kind == "level" else "#009588" for p in pct],
+                           text=[p.value_text for p in pct], textposition="outside",
+                           hovertext=[p.quote for p in pct], hoverinfo="text"))
+    fig.update_yaxes(autorange="reversed")
+    fig.update_xaxes(title="% (blue = level, teal = change)")
+    return _layout(fig, 60 + 32 * len(pct))

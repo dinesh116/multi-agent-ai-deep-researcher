@@ -13,17 +13,17 @@ from concurrent.futures import ThreadPoolExecutor
 
 from src.agents.base import Agent, RunContext
 from src.evidence.store import EvidenceStore, normalize_doi
-from src.ingestion.extract import extract_html
+from src.ingestion.extract import extract_html, extract_pdf
 from src.models.evidence import Origin
 from src.orchestration.state import QueryTask, ResearchState, SearchRecord
 from src.search.base import ProviderError, SearchResult, result_from_dict, result_to_dict
 
 TYPE_TO_PREFERENCE = {"academic": "academic", "preprint": "academic", "official": "official", "news": "news",
                       "documentation": "web", "analyst": "web", "company": "web", "opinion": "web", "blog": "web"}
-PROVIDER_RANK = {"academic": ["openalex", "arxiv", "crossref"], "official": ["tavily", "crossref"],
+PROVIDER_RANK = {"academic": ["openalex", "semantic_scholar", "arxiv", "crossref"], "official": ["tavily", "crossref"],
                  "news": ["tavily_news", "tavily"], "web": ["tavily"], "uploaded": ["upload"], "dataset": ["upload"]}
-MAX_FETCH_PER_ITERATION = 6
 MAX_LEADS_PER_ITERATION = 3
+MAX_PDF_PAGES = 40
 
 
 def cache_key(provider: str, query: str, task_filters: str, max_results: int) -> str:
@@ -123,7 +123,8 @@ class RetrieverAgent(Agent):
 
         if iteration > 0:
             new_count += self._follow_leads(store, state, ctx, records)
-        fetched = self._fetch_full_text(store, ctx, iteration)
+            new_count += self._snowball(store, state, ctx, records)
+        fetched = self._fetch_full_text(store, ctx, iteration, request.preset("full_text_fetches"))
         warnings = [f"{r.provider}: {r.message}" for r in records if r.status == "error"]
         if any(r.status == "skipped_budget" for r in records):
             warnings.append("Some searches were skipped because the research budget was reached.")
@@ -179,26 +180,83 @@ class RetrieverAgent(Agent):
             records.append(record)
         return added
 
-    def _fetch_full_text(self, store: EvidenceStore, ctx: RunContext, iteration: int) -> int:
-        if not (ctx.provider_settings.fetch_full_text and ctx.providers.http):
+    def _snowball(self, store: EvidenceStore, state: ResearchState, ctx: RunContext,
+                  records: list[SearchRecord]) -> int:
+        """Citation snowballing via OpenAlex: most-cited references of, and citations to, the most relevant papers."""
+        openalex = ctx.providers.openalex
+        if openalex is None:
             return 0
-        targets = [s for s in store.sources.values() if s.retrieval_method.startswith("tavily")
-                   and not s.full_text_available and s.url and s.iteration == iteration][:MAX_FETCH_PER_ITERATION]
-        if not targets or ctx.budget.out_of_time():
+        request, iteration = state["request"], state.get("iteration", 0)
+        assessments = state.get("assessments", {})
+        seeds = sorted((s for s in store.sources.values() if s.metadata.get("openalex_id")
+                        and not s.metadata.get("snowballed")),
+                       key=lambda s: -(assessments[s.id].relevance if s.id in assessments else 0))
+        budget_left = request.preset("snowball_per_round")
+        added = 0
+        for seed in seeds:
+            for direction in ("references", "cited_by"):
+                if budget_left <= 0 or not ctx.budget.try_search():
+                    return added
+                budget_left -= 1
+                record = SearchRecord(iteration=iteration, subquestion_id=(seed.subquestion_ids or [None])[0],
+                                      query=f"{direction}: {seed.title[:80]}", provider="openalex_snowball", status="ok")
+                try:
+                    results = openalex.related(seed.metadata["openalex_id"], direction, limit=2)
+                except Exception as exc:  # network/provider errors never stop the run
+                    record.status, record.message = "error", str(exc)[:160]
+                    records.append(record)
+                    continue
+                for result in results:
+                    source, is_new = store.add_result(result, Origin.LIVE, record.subquestion_id, record.query, iteration)
+                    if is_new and ctx.budget.add_sources(1):
+                        source.metadata["snowball"] = {"seed": seed.id, "direction": direction}
+                        added += 1
+                        record.new_sources += 1
+                record.results = len(results)
+                records.append(record)
+                ctx.event(self.name, "search", f"Snowballing ({direction.replace('_', ' ')}) from '{seed.title[:60]}' "
+                          f"→ {record.new_sources} new", iteration, provider="openalex_snowball")
+            seed.metadata["snowballed"] = True
+        return added
+
+    def _fetch_full_text(self, store: EvidenceStore, ctx: RunContext, iteration: int, limit: int) -> int:
+        """Replace snippets/abstracts with full text: web pages (HTML) and open-access PDFs, most relevant first."""
+        if not (ctx.provider_settings.fetch_full_text and ctx.providers.http) or ctx.budget.out_of_time():
+            return 0
+        candidates = [s for s in store.sources.values() if not s.full_text_available and s.iteration == iteration
+                      and (s.metadata.get("oa_pdf_url") or (s.retrieval_method.startswith("tavily") and s.url))]
+        candidates.sort(key=lambda s: -(s.metadata.get("provider_score") or 0))
+        targets = candidates[:limit]
+        if not targets:
             return 0
         http = ctx.providers.http
 
         def fetch(source):
-            html = http.safe_fetch(source.url)
-            return source.id, (extract_html(html, source.url) if html else None)
+            try:
+                if source.metadata.get("oa_pdf_url"):
+                    data = http.safe_fetch_pdf(source.metadata["oa_pdf_url"])
+                    if data:
+                        doc = extract_pdf(data, source.title)
+                        return source.id, doc.sections[:MAX_PDF_PAGES], "open-access PDF"
+                if source.url and source.retrieval_method.startswith("tavily"):
+                    html = http.safe_fetch(source.url)
+                    text = extract_html(html, source.url) if html else None
+                    if text:
+                        return source.id, [("full text", text)], "web page"
+            except Exception:  # malformed PDFs/pages: keep the abstract or snippet
+                pass
+            return source.id, None, ""
 
         count = 0
         with ThreadPoolExecutor(max_workers=ctx.max_parallel) as pool:
-            for source_id, text in pool.map(fetch, targets):
-                if text:
-                    store.replace_content(source_id, text)
+            for source_id, sections, via in pool.map(fetch, targets):
+                if sections:
+                    store.replace_sections(source_id, sections, via)
                     count += 1
                 else:
-                    store.sources[source_id].limitations.append("Full page could not be fetched or extracted; "
-                                                                "analysis uses the search snippet only.")
+                    store.sources[source_id].limitations.append(
+                        "Full text could not be fetched or extracted; analysis uses the snippet/abstract only.")
+        if count:
+            ctx.event(self.name, "info", f"Retrieved full text for {count} of {len(targets)} source(s) "
+                      "(web pages and open-access PDFs).", iteration, full_texts=count)
         return count

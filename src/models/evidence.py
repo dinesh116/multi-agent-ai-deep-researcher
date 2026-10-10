@@ -158,6 +158,37 @@ class Claim(BaseModel):
     subquestion_id: str | None = None
     extracted_by: str = "heuristic"
     notes: list[str] = Field(default_factory=list)
+    verified: bool | None = None  # LLM check that `text` faithfully restates `quote` (None = not checked)
+
+
+class DataPoint(BaseModel):
+    """A quantitative fact extracted from a passage (the raw material for key-number and comparison tables)."""
+
+    id: str
+    metric: str  # what is measured, e.g. "enterprises with agents in production"
+    value: float | None  # numeric value when parseable
+    value_text: str  # as written, e.g. "38%", "$1.2 billion", "3.2 times"
+    unit: str = ""  # % | USD | x | count | months | ...
+    kind: str = "level"  # level | change
+    subject: str = ""  # population/sample, e.g. "1,200 enterprises"
+    period: str = ""  # e.g. "2026", "next year"
+    method: str = ""  # e.g. "self-reported survey", "benchmark"
+    source_id: str
+    passage_id: str
+    quote: str
+    location: str = ""
+    extracted_by: str = "heuristic"
+
+
+class Entity(BaseModel):
+    """An organisation, product, technology or regulation recurring across sources."""
+
+    id: str
+    name: str
+    kind: str = "named_entity"  # company | product | technology | regulation | organisation | named_entity
+    mentions: int = 0
+    source_ids: list[str] = Field(default_factory=list)
+    claim_ids: list[str] = Field(default_factory=list)
 
 
 class EvidenceLink(BaseModel):
@@ -194,6 +225,9 @@ class MatrixRow(BaseModel):
     unresolved_questions: list[str] = Field(default_factory=list)
     weaknesses: list[str] = Field(default_factory=list)
     assessment: str = ""
+    strength: float = 0.0  # quality-weighted independent support (high=1, medium=.6, low=.25 per independent group)
+    source_types: list[str] = Field(default_factory=list)
+    grouped_by: str = "heuristic"  # heuristic | llm
 
 
 class Contradiction(BaseModel):
@@ -216,6 +250,7 @@ class GapKind(StrEnum):
     CONTESTED = "contested"
     OUTDATED = "outdated"
     LOW_QUALITY = "low_quality"
+    UNCHALLENGED = "unchallenged"  # a key finding no search has yet tried to disprove
 
 
 class ResearchGap(BaseModel):
@@ -285,6 +320,7 @@ class ReportSection(BaseModel):
 class Report(BaseModel):
     title: str
     question: str
+    template: str = "standard"  # outlook | evidence_assessment | literature_review | landscape | brief | full
     sections: list[ReportSection]
     references: list[dict[str, Any]]  # {"n": 1, "source_id": ..., "label": ..., "url": ..., "origin": ...}
     citation_checks: list[CitationCheck] = Field(default_factory=list)

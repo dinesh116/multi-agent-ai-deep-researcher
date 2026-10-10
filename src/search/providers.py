@@ -22,8 +22,8 @@ class TavilyProvider:
     serves = {"web", "news", "official"}
     endpoint = "https://api.tavily.com/search"
 
-    def __init__(self, api_key: str | None, http: HttpClient, topic: str = "general"):
-        self.api_key, self.http, self.topic = api_key, http, topic
+    def __init__(self, api_key: str | None, http: HttpClient, topic: str = "general", advanced: bool = True):
+        self.api_key, self.http, self.topic, self.advanced = api_key, http, topic, advanced
 
     @property
     def available(self) -> bool:
@@ -37,8 +37,10 @@ class TavilyProvider:
                date_to: date | None = None) -> list[SearchResult]:
         if not self.api_key:
             raise ProviderError(self.unavailable_reason)
-        payload = {"query": query[:400], "max_results": max_results, "search_depth": "basic", "topic": self.topic,
-                   "include_answer": False, "include_raw_content": False}
+        # Advanced depth returns better-ranked chunks; raw content returns the page text (about 2 credits per search).
+        payload = {"query": query[:400], "max_results": max_results,
+                   "search_depth": "advanced" if self.advanced else "basic", "topic": self.topic,
+                   "include_answer": False, "include_raw_content": self.advanced}
         if date_from:
             payload["start_date"] = date_from.isoformat()
         if date_to:
@@ -50,11 +52,16 @@ class TavilyProvider:
 def parse_tavily_item(item: dict, topic: str = "general") -> SearchResult:
     url, title = item["url"], (item.get("title") or item["url"]).strip()
     host = re.sub(r"^https?://(www\.)?", "", url).split("/")[0]
+    snippet = (item.get("content") or "").strip()
+    raw = re.sub(r"\n{3,}", "\n\n", (item.get("raw_content") or "")).strip()[:60_000]
+    full = len(raw) > max(600, len(snippet) * 2)
     return SearchResult(
-        title=title, provider="tavily", url=url, snippet=(item.get("content") or "").strip(),
-        content=(item.get("content") or "").strip(), publisher=host,
-        published_date=parse_date(item.get("published_date")), source_type=infer_web_source_type(url, title, topic),
-        score=float(item.get("score") or 0), limitations=["Search snippet only unless the full page could be fetched."])
+        title=title, provider="tavily", url=url, snippet=snippet, content=raw if full else snippet,
+        full_text_available=full, publisher=host, published_date=parse_date(item.get("published_date")),
+        source_type=infer_web_source_type(url, title, topic), score=float(item.get("score") or 0),
+        sections=[("full text", raw)] if full else [],
+        metadata={"full_text_via": "Tavily raw content"} if full else {},
+        limitations=[] if full else ["Search snippet only unless the full page could be fetched."])
 
 
 class OpenAlexProvider:
@@ -83,6 +90,16 @@ class OpenAlexProvider:
         data = self.http.get_json(self.endpoint, params=params)
         return [parse_openalex_work(w) for w in data.get("results", []) if w.get("display_name") or w.get("title")]
 
+    def related(self, openalex_id: str, direction: str, limit: int = 2) -> list[SearchResult]:
+        """Citation snowballing: the most-cited works this work cites ("references") or that cite it ("cited_by")."""
+        work_id = openalex_id.rstrip("/").rsplit("/", 1)[-1]
+        flt = f"cited_by:{work_id}" if direction == "references" else f"cites:{work_id}"
+        params = {"filter": flt, "sort": "cited_by_count:desc", "per-page": limit}
+        if self.contact_email:
+            params["mailto"] = self.contact_email
+        data = self.http.get_json(self.endpoint, params=params)
+        return [parse_openalex_work(w) for w in data.get("results", []) if w.get("display_name") or w.get("title")]
+
 
 def reconstruct_abstract(inverted: dict | None) -> str:
     if not inverted:
@@ -106,7 +123,9 @@ def parse_openalex_work(work: dict) -> SearchResult:
         authors=[a["author"]["display_name"] for a in work.get("authorships", [])[:8] if a.get("author")],
         published_date=parse_date(work.get("publication_date")), source_type="preprint" if is_preprint else "academic_paper",
         metadata={"cited_by_count": work.get("cited_by_count"), "openalex_id": work.get("id"),
-                  "referenced_works": len(work.get("referenced_works") or [])},
+                  "referenced_works": len(work.get("referenced_works") or []),
+                  "oa_pdf_url": ((work.get("best_oa_location") or {}).get("pdf_url")
+                                 or (work.get("open_access") or {}).get("oa_url"))},
         sections=[("abstract", abstract)] if abstract else [], limitations=limitations)
 
 
@@ -218,5 +237,54 @@ def parse_arxiv_feed(xml: str) -> list[SearchResult]:
             content=summary, publisher="arXiv", source_type="preprint",
             authors=[a.findtext("a:name", "", ATOM) for a in entry.findall("a:author", ATOM)][:8],
             published_date=parse_date(entry.findtext("a:published", "", ATOM)), sections=[("abstract", summary)],
+            metadata={"oa_pdf_url": abs_url.replace("/abs/", "/pdf/")},
             limitations=["Preprint: not peer reviewed.", "Abstract only: the full text was not retrieved."]))
     return results
+
+
+class SemanticScholarProvider:
+    """Semantic Scholar Graph API: citations, influential citations, TLDR summaries and open-access PDFs."""
+
+    name, label, live = "semantic_scholar", "Semantic Scholar (papers & citations)", True
+    serves = {"academic"}
+    endpoint = "https://api.semanticscholar.org/graph/v1/paper/search"
+    fields = ("title,abstract,year,publicationDate,authors,venue,url,externalIds,citationCount,"
+              "influentialCitationCount,tldr,openAccessPdf,publicationTypes")
+
+    def __init__(self, http: HttpClient, api_key: str | None = None):
+        self.http, self.api_key = http, api_key
+
+    available = True
+    unavailable_reason = ""
+
+    def search(self, query: str, max_results: int = 5, date_from: date | None = None,
+               date_to: date | None = None) -> list[SearchResult]:
+        params = {"query": query[:300], "limit": max_results, "fields": self.fields}
+        if date_from or date_to:
+            params["year"] = f"{date_from.year if date_from else ''}-{date_to.year if date_to else ''}"
+        headers = {"x-api-key": self.api_key} if self.api_key else None
+        data = self.http.get_json(self.endpoint, params=params, headers=headers)
+        return [parse_semantic_scholar(p) for p in data.get("data", []) if p.get("title")]
+
+
+def parse_semantic_scholar(paper: dict) -> SearchResult:
+    ids = paper.get("externalIds") or {}
+    abstract = (paper.get("abstract") or "").strip()
+    tldr = ((paper.get("tldr") or {}).get("text") or "").strip()
+    content = abstract or (f"TLDR (machine-generated summary): {tldr}" if tldr else "")
+    venue = (paper.get("venue") or "").strip()
+    preprint = "arxiv" in venue.lower() or (not venue and "ArXiv" in ids)
+    doi = ids.get("DOI")
+    limitations = ["Preprint: not peer reviewed."] if preprint else []
+    limitations.append("Abstract only: the full text was not retrieved." if abstract else
+                       "No abstract: only a machine-generated TLDR is available.")
+    return SearchResult(
+        title=paper["title"].strip(), provider="semantic_scholar",
+        url=(f"https://doi.org/{doi}" if doi else paper.get("url")), doc_ref=doi or (f"arXiv:{ids['ArXiv']}" if ids.get("ArXiv") else None),
+        snippet=content[:600], content=content, publisher=venue or None,
+        authors=[a.get("name", "") for a in (paper.get("authors") or [])[:8] if a.get("name")],
+        published_date=parse_date(paper.get("publicationDate") or (str(paper["year"]) if paper.get("year") else None)),
+        source_type="preprint" if preprint else "academic_paper",
+        metadata={"cited_by_count": paper.get("citationCount"), "influential_citations": paper.get("influentialCitationCount"),
+                  "tldr": tldr, "oa_pdf_url": (paper.get("openAccessPdf") or {}).get("url")},
+        sections=[("abstract", content)] if content else [], limitations=limitations)
