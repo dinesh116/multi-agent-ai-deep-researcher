@@ -107,6 +107,8 @@ def run_research(request: ResearchRequest, settings: Settings, repo=None, on_eve
                     for key, value in (node_output or {}).items():
                         if key in ("events", "search_log", "warnings", "errors"):
                             final[key] = final.get(key, []) + list(value)
+                        elif key == "statuses":  # each node reports only its own agent (parallel branches)
+                            final[key] = {**final.get(key, {}), **value}
                         else:
                             final[key] = value
             status = "completed" if final.get("report") else "failed"

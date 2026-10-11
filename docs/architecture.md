@@ -38,8 +38,10 @@ src/models/               Pydantic models: request/plan, evidence, run bundle
 START → planner → retriever → source_evaluator → critical_analyst → gap_analyst
                                    ↑                                   │
                                    └─────── follow_up_retrieval ◄── follow_up
-                                                                       │ synthesize
-                                          insight_generator → data_visualizer → report_builder → END
+                                                                       │ synthesize (fan-out)
+                                                  ┌────────────────────────┴────────────────────────┐
+                                          insight_generator                                   data_visualizer
+                                                  └────────────── report_builder → END (fan-in) ─────┘
 ```
 
 - **State** (`orchestration/state.py`) is a `TypedDict` of Pydantic objects: request, budget, plan, iteration,
@@ -55,7 +57,9 @@ START → planner → retriever → source_evaluator → critical_analyst → ga
 - **Failure handling**: each node is wrapped. An exception becomes an `errors` entry and a `failed` status,
   the evidence gathered so far is preserved, and the run continues to a report that lists the error.
 - **Concurrency**: searches within a retrieval round, full-page fetches, and per-source LLM claim extraction
-  run in thread pools. Graph nodes run sequentially because they depend on each other.
+  run in thread pools. Graph nodes run in order where they depend on each other; the Insight Generator and the Data
+  Visualizer are independent, so they run in the same LangGraph step (parallel branches) and the Report Builder
+  waits for both. `statuses` uses a merging reducer so parallel nodes each report only their own status.
 
 ## Agents (inputs → outputs)
 
