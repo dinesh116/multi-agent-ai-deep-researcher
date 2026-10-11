@@ -1,22 +1,23 @@
-"""Page 2: Agents in action. Live workflow events from the orchestrator, or the audit trail of a past run."""
-import queue
-import threading
-import time
+"""Page 2: Agents in action. Live progress of a queued/running investigation, or the audit trail of a past run.
+
+Research runs in the process-wide job runner, not in this page. The live view polls the database, so leaving the
+page, refreshing or opening the app in another tab or device reattaches to the same run.
+"""
 from html import escape
 
 import pandas as pd
 import streamlit as st
 
 from src.models.evidence import AgentEvent
-from src.models.research import ResearchRequest, new_id
 from src.orchestration.state import AGENT_ORDER
-from src.services.research_service import run_research
 from src.services.run_events import ProgressTracker
 from src.ui.components import AGENT_INFO, AGENT_TITLES, DEPTH_LABELS, card, demo_banner, eyebrow, html
-from src.ui.state import (current_user, effective_settings, get_repo, load_selected_run, new_research, open_run,
-                         provider_settings, select_run)
+from src.ui.state import (active_run_id, current_user, get_repo, get_run_manager, load_selected_run, new_research,
+                          open_run, select_run)
 
 repo = get_repo()
+POLL_SECONDS = 1.5
+MAX_FEED_EVENTS = 50  # the activity card shows the latest few; keep the session's copy small
 STATE_LABEL = {"completed": "✓ Complete", "running": "◌ Working", "failed": "✕ Failed"}
 ROW_CLASS = {"completed": "done", "running": "working", "failed": "failed"}
 
@@ -71,77 +72,52 @@ def activity_card(events: list[AgentEvent], running: bool) -> str:
             f'<span style="color:#55b592">●</span></div>{body}</div>')
 
 
-pending = st.session_state.pop("pending_request", None)
-if pending:
-    request = ResearchRequest.model_validate_json(pending)
-    owner_id = current_user().id
-    run_id = new_id("run")
-    events: "queue.Queue[AgentEvent]" = queue.Queue()
-    outcome: dict = {}
-
-    def worker() -> None:  # Streamlit UI calls must stay on the main thread, so the run reports via a queue
-        try:
-            outcome["state"] = run_research(request, effective_settings(), repo=repo, on_event=events.put,
-                                            provider_settings=provider_settings(), run_id=run_id, owner_id=owner_id)
-        except Exception as exc:  # surfaced below; the run row is marked failed by the service
-            outcome["error"] = f"{type(exc).__name__}: {exc}"
-
-    heading(live=True)
-    demo_banner(request.mode.value)
-    meta = [f"✧ {DEPTH_LABELS[request.depth.value]} research", "Demo dataset" if request.mode.value == "demo"
-            else "Live sources", "Started just now"]
-    question_slot = st.empty()
-    left, right = st.columns([1.5, 0.85])
-    agents_slot, activity_slot = left.empty(), right.empty()
-    thread = threading.Thread(target=worker, daemon=True)
-    thread.start()
-
-    tracker = ProgressTracker()
-    statuses, messages = tracker.statuses, tracker.messages
-    log: list[AgentEvent] = []
-    first = True
-    while thread.is_alive() or not events.empty() or first:
-        updated = first
-        first = False
-        while not events.empty():
-            event = events.get()
-            log.append(event)
-            tracker.apply(event)
-            updated = True
-        if updated:
-            running = AGENT_TITLES[tracker.current] if tracker.current else None
-            question_slot.markdown(question_card(request.question, meta + [f"{tracker.sources} sources found"], tracker.done,
-                                                 f"{running} working" if running else "Starting the research team"),
-                                   unsafe_allow_html=True)
-            agents_slot.markdown(agents_card(statuses, messages), unsafe_allow_html=True)
-            activity_slot.markdown(activity_card(log, running=True), unsafe_allow_html=True)
-        time.sleep(0.15)
-    thread.join()
-
-    state = outcome.get("state")
-    if state and state.get("report"):
-        final = {a: ("completed" if statuses.get(a) == "completed" else statuses.get(a, "pending")) for a in AGENT_ORDER}
-        question_slot.markdown(question_card(request.question, meta + [f"{len(state['sources'])} sources found"],
-                                             len(AGENT_ORDER), f"Research complete in {state['usage'].elapsed_seconds}s"),
-                               unsafe_allow_html=True)
-        agents_slot.markdown(agents_card(final, messages, {a: "Skipped" for a in AGENT_ORDER if final[a] == "pending"}),
-                             unsafe_allow_html=True)
-        activity_slot.markdown(activity_card(log, running=False), unsafe_allow_html=True)
-        select_run(run_id)
-        st.success(f"Done: {len(state['sources'])} sources, {len(state['claims'])} claims, "
-                   f"{len(state['contradictions'])} contradiction(s), {len(state['insights'])} insights. "
-                   f"Stopped because: {state.get('stop_reason') or 'workflow finished'}")
-        a, b = st.columns([3, 1])
-        if a.button("New research", icon=":material/add:", key="after_new"):
-            new_research()
-        if b.button("View results →", type="primary", width="stretch", key="after_results"):
-            open_run(run_id)
+@st.fragment(run_every=POLL_SECONDS)
+def live_view(run_id: str) -> None:
+    """Redraws from the database every few seconds; only events newer than the last poll are fetched."""
+    feed = st.session_state.get("_live_feed")
+    if not feed or feed["run_id"] != run_id:
+        feed = st.session_state["_live_feed"] = {"run_id": run_id, "after": -1, "events": []}
+    progress = repo.get_progress(run_id, user.id, after_seq=feed["after"])
+    if progress is None:
+        st.warning("This investigation is no longer available.", icon=":material/info:")
+        return
+    feed["events"] = (feed["events"] + progress.events)[-MAX_FEED_EVENTS:]
+    feed["after"] = progress.last_seq
+    if not progress.active:  # finished: switch the whole page to the audit trail
+        st.session_state.pop("_live_feed", None)
+        st.rerun()
+    tracker = ProgressTracker.from_snapshot(progress.progress)
+    meta = [f"✧ {DEPTH_LABELS.get(progress.depth, 'Standard')} research",
+            "Demo dataset" if progress.mode == "demo" else "Live sources",
+            f"Started {progress.created_at:%H:%M}", f"{tracker.sources} sources found"]
+    if progress.cancel_requested:
+        caption = "Stopping: writing the report from the evidence gathered so far"
+    elif progress.status == "queued":
+        position = get_run_manager().queue_position(run_id)
+        caption = "Waiting for a free research slot" + (f" (position {position} in the queue)" if position else "")
     else:
-        st.error(outcome.get("error") or "The workflow finished without a report. See errors below.")
-        if state:
-            select_run(run_id)
-    for error in (state or {}).get("errors", []):
-        st.error(error)
+        caption = f"{AGENT_TITLES[tracker.current]} working" if tracker.current else "Starting the research team"
+    html(question_card(progress.question, meta, tracker.done, caption))
+    left, right = st.columns([1.5, 0.85])
+    left.markdown(agents_card(tracker.statuses, tracker.messages), unsafe_allow_html=True)
+    right.markdown(activity_card(feed["events"], running=True), unsafe_allow_html=True)
+    note, stop = st.columns([3, 1], vertical_alignment="center")
+    note.caption("You can leave this page: the investigation keeps running, and you can come back from the sidebar.")
+    # a callback runs before the next render, so the redraw already shows the stop (no explicit rerun needed)
+    stop.button("Stop & write report", icon=":material/stop_circle:", key="stop_run", width="stretch",
+                disabled=progress.cancel_requested, on_click=get_run_manager().cancel, args=(run_id, user.id),
+                help="Stop searching and write the report from the evidence gathered so far.")
+
+
+user = current_user()
+run_id = st.session_state.get("selected_run_id") or active_run_id(user.id)
+current = repo.get_progress(run_id, user.id) if run_id else None
+if current is not None and current.active:
+    select_run(run_id)
+    heading(live=True)
+    demo_banner(current.mode)
+    live_view(run_id)
     st.stop()
 
 # ------------------------------------------------------------------------------ audit trail of the selected run
@@ -171,6 +147,14 @@ left, right = st.columns([1.5, 0.85])
 left.markdown(agents_card(statuses, messages, extra), unsafe_allow_html=True)
 right.markdown(activity_card(bundle.events, running=False), unsafe_allow_html=True)
 st.write("")
+found = (f"{len(bundle.sources)} sources, {len(bundle.claims)} claims, {len(bundle.contradictions)} contradiction(s), "
+         f"{len(bundle.insights)} insights")
+if bundle.summary.status == "completed":
+    st.success(f"Research complete: {found}.", icon=":material/check_circle:")
+elif bundle.summary.status == "cancelled":
+    st.info(f"Stopped by you: {found}. "
+            + ("The report covers only the evidence gathered before stopping." if bundle.report else
+               "It was stopped before it started."), icon=":material/stop_circle:")
 if usage:
     with card("usage"):
         m = st.columns(7)

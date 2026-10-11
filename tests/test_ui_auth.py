@@ -45,6 +45,16 @@ def start_demo(at: AppTest, question_index: int = 0) -> AppTest:
         at.segmented_control(key="q_mode").set_value("demo").run()
     at.radio(key="q_demo").set_value(DEMO_QUESTIONS[question_index]).run()
     at.button(key="start_research").click().run()
+    return wait_for_run(at)
+
+
+def wait_for_run(at: AppTest, timeout: float = 120) -> AppTest:
+    """The run executes in the background job runner: re-render the progress page until it shows the outcome."""
+    import time
+    deadline = time.monotonic() + timeout
+    while not (at.success or at.exception or [e for e in at.error]) and time.monotonic() < deadline:
+        time.sleep(0.2)
+        at.switch_page("app_pages/2_Research_Progress.py").run()  # AppTest reruns its own page, not the app's switch
     return at
 
 
@@ -104,3 +114,45 @@ def test_guest_demo_run_is_listed_only_for_that_guest():
     other = app(with_auth=True)  # a different browser session = a different guest
     other.switch_page("app_pages/7_Research_History.py").run()
     assert any("No research runs yet" in i.value for i in other.info)
+
+
+def test_live_view_reattaches_and_stops_a_running_investigation(tmp_path):
+    """A run executing elsewhere (another tab, device or instance) is followed from the database and can be stopped."""
+    from src.database.repository import LOCAL_OWNER, Repository
+    from src.models.research import ResearchRequest
+    from src.models.evidence import AgentEvent
+    from tests.conftest import QUESTION
+    at = app(with_auth=False)
+    repo = Repository(tmp_path / "ui.db")
+    repo.create_run("run_elsewhere", ResearchRequest(question=QUESTION), LOCAL_OWNER, worker_id="other-instance")
+    repo.update_progress("run_elsewhere", LOCAL_OWNER, {"statuses": {"planner": "completed", "retriever": "running"},
+                                                        "messages": {"planner": "Plan ready"}, "sources": 3},
+                         [AgentEvent(agent="retriever", status="search", message="Searching the corpus")], 0)
+
+    at.run()  # the sidebar lists it as in progress
+    assert any(b.key == "active_run_elsewhere" for b in at.button)
+    at.switch_page("app_pages/2_Research_Progress.py").run()  # no selection: the active run is found
+    assert not at.exception
+    page = " ".join(m.value for m in at.markdown)
+    assert "Contextual Retriever working" in page and "3 sources found" in page and "Searching the corpus" in page
+    at.button(key="stop_run").click().run()
+    assert not at.exception and repo.is_cancel_requested("run_elsewhere")
+    assert at.button(key="stop_run").disabled and "Stopping" in " ".join(m.value for m in at.markdown)
+
+    at.switch_page("app_pages/3_Research_Results.py").run()  # no half-finished results
+    assert any("still in progress" in i.value for i in at.info) and not at.tabs
+    at.switch_page("app_pages/7_Research_History.py").run()
+    assert not at.exception and any(b.label == "Follow" for b in at.button)
+    assert any(b.key == "del_run_elsewhere" and b.disabled for b in at.button)  # stop before deleting
+
+
+def test_second_run_is_refused_while_one_is_active(tmp_path):
+    from src.database.repository import LOCAL_OWNER, Repository
+    from src.models.research import ResearchRequest
+    from tests.conftest import QUESTION
+    at = app(with_auth=False)
+    Repository(tmp_path / "ui.db").create_run("run_busy", ResearchRequest(question=QUESTION), LOCAL_OWNER)
+    at.switch_page("app_pages/1_Research_Workspace.py").run()
+    at.segmented_control(key="q_mode").set_value("demo").run()
+    at.button(key="start_research").click().run()
+    assert any("already have an investigation in progress" in e.value for e in at.error)

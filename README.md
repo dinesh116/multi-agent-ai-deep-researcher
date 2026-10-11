@@ -116,8 +116,10 @@ The interface follows the "Synthora" wireframe: violet accent, white cards, DM S
 2. **Research workspace**: Live/Demo switch (guests: demo only); demo shows the three question cards, live shows a
    free-text question with suggestions; depth cards (Quick/Standard/Deep); advanced settings (context, objectives,
    follow-up rounds, source types, dates, LLM, documents); recent investigations.
-3. **Agents in action**: live agent list with status, activity timeline and progress bar while a run executes; for a
-   past run, the per-agent audit trail, budget usage, stopping decision, full event log and search activity.
+3. **Agents in action**: live agent list with status, activity timeline and progress bar while a run is queued or
+   executing, with **Stop & write report**; for a past run, the per-agent audit trail, budget usage, stopping
+   decision, full event log and search activity. Research runs in a background job runner, so you can leave the page,
+   refresh or switch devices and reattach from **In progress** in the sidebar.
 4. **Research results**: one investigation in tabs: *Overview* (executive summary, key findings, at a glance),
    *Evidence* (filterable sources, assessments, passages, claims), *Analysis* (evidence matrix, contradictions,
    agreement vs uncertainty, gaps, coverage), *Insights* (observed / inferred / speculative), *Charts* (extracted values and provenance), *Full report* (cited
@@ -187,6 +189,8 @@ Q&A citation validation, and prompt-injection handling.
 - **"Web search unavailable"**: set `TAVILY_API_KEY` in `.env` and restart, or rely on academic sources.
 - **Live runs return few sources**: widen the date range, enable more providers, or choose *Deep*.
 - **LLM output rejected** (in the progress log): the app fell back to deterministic logic. Try a stronger model on the Settings page.
+- **"You already have an investigation in progress"**: each user runs one at a time by default
+  (`MAX_ACTIVE_RUNS_PER_USER`). Open it from **In progress** in the sidebar, stop it, or wait for it to finish.
 - **A run is stuck as "running"** after the app stopped: running investigations send a heartbeat every `RUN_HEARTBEAT_SECONDS`; one without a heartbeat for `RUN_STALE_AFTER_SECONDS` is marked failed when the app next starts. Runs that are still alive on another instance are left alone.
 - **Start fresh**: delete `data/research.db`.
 
@@ -207,7 +211,7 @@ The **Critical Analysis Agent** rejects model paraphrases that introduce numbers
 
 Every actual LLM request, including a retry, consumes the per-run call allowance. Token reservations are atomic across parallel claim extraction calls. Before a request, a conservative allowance based on prompt UTF-8 bytes, response limit and framing is reserved. Provider-reported usage replaces that allowance on success; failed requests and responses without usage retain an explicitly **unreported** allowance because their billing is unknown. Conservative reservations can stop a run before the nominal token limit. The progress page separates observed, unreported and in-flight tokens.
 
-Set `LLM_INPUT_USD_PER_MILLION` and `LLM_OUTPUT_USD_PER_MILLION` to the selected model's rates to enable a USD estimate. Update these when changing models; zero means unknown, not free. Estimates are partial if usage is missing. LLM request timeouts and retry waits use the remaining run time. Already-running search/fetch requests have their own HTTP timeout, so the run time budget is not a hard cancellation of all network work. No per-user quotas or global concurrency limits have been added.
+Set `LLM_INPUT_USD_PER_MILLION` and `LLM_OUTPUT_USD_PER_MILLION` to the selected model's rates to enable a USD estimate. Update these when changing models; zero means unknown, not free. Estimates are partial if usage is missing. LLM request timeouts and retry waits use the remaining run time. Already-running search/fetch requests have their own HTTP timeout, so the run time budget is not a hard cancellation of all network work. Concurrency is bounded: each app process executes at most `MAX_CONCURRENT_RUNS` investigations at once, each user may have `MAX_ACTIVE_RUNS_PER_USER` queued or running, and new runs are refused once `MAX_QUEUED_RUNS` are active overall. There are no token or cost quotas per user.
 
 ## CI and deployment verification
 

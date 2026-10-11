@@ -6,7 +6,7 @@ Deploy this repository with `app.py` as the Streamlit entry point, using the dep
 
 Configure `ADMIN_EMAILS` only for trusted operators. Set provider keys for the live capabilities you intend to demonstrate. If using shared persistent storage, configure both `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`; otherwise the app uses SQLite at `APP_DB_PATH` and the host may discard that file on restart. `APP_ENV` controls authentication policy, not database selection. Missing production authentication stops the app before shared storage is opened.
 
-For cost estimates, configure `LLM_INPUT_USD_PER_MILLION` and `LLM_OUTPUT_USD_PER_MILLION` for the active model. Update rates whenever the model changes. No user quotas or global concurrency controls are provided.
+For cost estimates, configure `LLM_INPUT_USD_PER_MILLION` and `LLM_OUTPUT_USD_PER_MILLION` for the active model. Update rates whenever the model changes. Size `MAX_CONCURRENT_RUNS`, `MAX_ACTIVE_RUNS_PER_USER` and `MAX_QUEUED_RUNS` to the host: each running investigation uses a few threads and outbound connections. There are no per-user token or cost quotas.
 
 ## Public availability check
 

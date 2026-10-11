@@ -4,12 +4,18 @@ from html import escape
 
 import streamlit as st
 
+from src.models.run import ACTIVE_STATUSES
 from src.reporting.render import to_html, to_markdown, to_pdf
 from src.ui.components import DEPTH_LABELS, card, demo_banner, eyebrow, html
 from src.ui.state import current_user, effective_settings, get_repo, preference, require_run
 from src.ui.views import analysis, evidence, insights, qa, visualizations, report as report_view
 
 bundle = require_run()
+if bundle.summary.status in ACTIVE_STATUSES:  # results appear when the investigation finishes
+    st.info("This investigation is still in progress. Follow it live; its results appear here when it finishes.",
+            icon=":material/progress_activity:")
+    st.page_link("app_pages/2_Research_Progress.py", label="Follow live", icon=":material/arrow_forward:")
+    st.stop()
 repo, settings, user = get_repo(), effective_settings(), current_user()
 report = bundle.report
 summary = bundle.summary

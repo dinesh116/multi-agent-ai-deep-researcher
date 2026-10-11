@@ -166,6 +166,9 @@ class PlannerAgent(Agent):
         per_sq = request.preset("queries_per_subquestion")
         tasks = [QueryTask(subquestion_id=sq.id, query=q, source_types=sq.source_types)
                  for sq in sorted(plan.subquestions, key=lambda s: s.priority) for q in sq.queries[:per_sq]]
+        ctx.event(self.name, "completed", f"Plan with {len(plan.subquestions)} subquestions and {len(tasks)} search "
+                  f"queries ({'LLM' if plan.generated_by == 'llm' else 'deterministic'} planner).",
+                  subquestions=len(plan.subquestions), queries=len(tasks))
         return {"plan": plan, "pending_queries": tasks, "iteration": 0}
 
     # ------------------------------------------------------------------ deterministic plan

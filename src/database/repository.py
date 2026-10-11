@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -16,13 +17,24 @@ from src.database.backend import SQLiteBackend, make_backend
 from src.models.evidence import (AgentEvent, AgentStatus, Claim, Contradiction, EvidenceLink, Insight, MatrixRow,
                                  Passage, Report, ResearchGap, Source, SourceAssessment)
 from src.models.research import BudgetUsage, ResearchPlan, ResearchRequest, new_id, now
-from src.models.run import RunBundle, RunProgress, RunSummary
+from src.models.run import ACTIVE_STATUSES, RunBundle, RunProgress, RunSummary
 from src.models.visualization import EvidenceChart
 
 SCHEMA = Path(__file__).with_name("schema.sql")
 LOCAL_OWNER = "local"
 RUN_CHILD_TABLES = ("sources", "passages", "assessments", "claims", "matrix_rows", "evidence_links", "contradictions",
                     "gaps", "insights", "charts", "reports", "events", "search_log", "qa_messages")
+
+
+@dataclass(frozen=True)
+class ProgressAck:
+    """Result of a progress write: truthy while the run is still active."""
+
+    active: bool
+    cancel_requested: bool = False
+
+    def __bool__(self) -> bool:
+        return self.active
 
 
 def _dump(model) -> str:
@@ -121,7 +133,10 @@ class Repository:
 
     def save_run_results(self, run_id: str, state: dict, status: str, owner_id: str = LOCAL_OWNER,
                          events_persisted: bool = False) -> None:
-        """Write the final run. With `events_persisted`, the event log already written by an EventSink is kept."""
+        """Write the final run; returns False (and writes nothing) if the run was deleted while it executed.
+
+        With `events_persisted`, the event log already written by an EventSink is kept.
+        """
         report: Report | None = state.get("report")
         exec_summary = report.section("executive_summary").content if report and report.section("executive_summary") else ""
         counts = {"sources": len(state.get("sources", [])), "claims": len(state.get("claims", [])),
@@ -131,12 +146,8 @@ class Repository:
             existing = db.one("SELECT owner_id FROM runs WHERE id = ?", (run_id,))
             if existing and existing["owner_id"] != owner_id:
                 raise PermissionError("This run belongs to another user.")
-            if not existing:
-                request = state["request"]
-                db.execute("INSERT INTO runs (id, owner_id, question, status, mode, created_at, request) "
-                           "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                           (run_id, owner_id, request.question, status, request.mode.value, now().isoformat(),
-                            request.model_dump_json()))
+            if not existing:  # deleted while it executed (e.g. "Delete my data"): do not bring it back
+                return False
             db.execute(
                 "UPDATE runs SET status = ?, completed_at = ?, plan = ?, usage = ?, statuses = ?, stop_reason = ?, "
                 "summary = ?, warnings = ?, errors = ?, provider_notes = ?, counts = ? WHERE id = ? AND owner_id = ?",
@@ -179,6 +190,7 @@ class Repository:
                 self._insert_events(db, run_id, state.get("events", []), 0)
             db.insert_many("search_log", ("run_id", "seq", "provider", "query", "status", "data"), [
                 (run_id, n, r.provider, r.query, r.status, _dump(r)) for n, r in enumerate(state.get("search_log", []))])
+        return True
 
     @staticmethod
     def _summary(r: dict) -> RunSummary:
@@ -230,9 +242,11 @@ class Repository:
                 warnings=json.loads(run["warnings"] or "[]"), errors=json.loads(run["errors"] or "[]"),
                 provider_notes=json.loads(run["provider_notes"] or "[]"))
 
-    def delete_run(self, run_id: str, owner_id: str = LOCAL_OWNER) -> bool:
+    def delete_run(self, run_id: str, owner_id: str = LOCAL_OWNER, allow_active: bool = False) -> bool:
+        """Delete a run and its data. Queued/running runs are kept unless `allow_active` (stop them first)."""
         with self.backend.session() as db:
-            if not db.one("SELECT 1 AS ok FROM runs WHERE id = ? AND owner_id = ?", (run_id, owner_id)):
+            row = db.one("SELECT status FROM runs WHERE id = ? AND owner_id = ?", (run_id, owner_id))
+            if not row or (row["status"] in ACTIVE_STATUSES and not allow_active):
                 return False
             for table in RUN_CHILD_TABLES:
                 db.execute(f"DELETE FROM {table} WHERE run_id = ?", (run_id,))
@@ -253,19 +267,23 @@ class Repository:
                 self._insert_events(db, run_id, events, start_seq)
 
     def update_progress(self, run_id: str, owner_id: str, progress: dict | None = None,
-                        events: list[AgentEvent] = (), start_seq: int = 0, worker_id: str | None = None) -> bool:
+                        events: list[AgentEvent] = (), start_seq: int = 0, worker_id: str | None = None) -> ProgressAck:
         """Heartbeat (plus optional progress snapshot and events) in one transaction.
 
-        Returns False when the run is no longer active (finished, reaped or deleted), so the caller can stop.
+        The result is falsy when the run is no longer active (finished, reaped or deleted), so the caller can stop,
+        and reports whether the owner asked the run to stop.
         """
         with self.backend.session() as db:
             changed = db.execute(
                 "UPDATE runs SET heartbeat_at = ?, worker_id = COALESCE(?, worker_id), "
                 "progress = COALESCE(?, progress) WHERE id = ? AND owner_id = ? AND status IN ('queued', 'running')",
                 (now().isoformat(), worker_id, json.dumps(progress) if progress is not None else None, run_id, owner_id))
-            if changed and events:
+            if not changed:
+                return ProgressAck(active=False)
+            if events:
                 self._insert_events(db, run_id, list(events), start_seq)
-        return bool(changed)
+            row = db.one("SELECT cancel_requested FROM runs WHERE id = ?", (run_id,))
+        return ProgressAck(active=True, cancel_requested=bool(row and row["cancel_requested"]))
 
     def get_progress(self, run_id: str, owner_id: str, after_seq: int = -1) -> RunProgress | None:
         """Status, progress snapshot and events newer than `after_seq`; None for unknown or foreign runs."""
@@ -285,10 +303,40 @@ class Repository:
             last_seq=rows[-1]["seq"] if rows else after_seq)
 
     def request_cancel(self, run_id: str, owner_id: str) -> bool:
-        """Ask an active run to stop; the worker notices on its next check. False if not active or not owned."""
+        """Stop a run: a queued run is cancelled at once; a running one is flagged and its worker finishes early.
+
+        False if the run is not active or not owned by `owner_id`.
+        """
         with self.backend.session() as db:
+            if db.execute("UPDATE runs SET status = 'cancelled', cancel_requested = 1, completed_at = ?, "
+                          "stop_reason = 'Stopped by user before it started.' WHERE id = ? AND owner_id = ? "
+                          "AND status = 'queued'", (now().isoformat(), run_id, owner_id)):
+                return True
             return bool(db.execute("UPDATE runs SET cancel_requested = 1 WHERE id = ? AND owner_id = ? "
-                                   "AND status IN ('queued', 'running')", (run_id, owner_id)))
+                                   "AND status = 'running'", (run_id, owner_id)))
+
+    def start_run(self, run_id: str, owner_id: str, worker_id: str) -> bool:
+        """Claim a queued run for execution. False if it was cancelled, reaped or deleted while it waited."""
+        with self.backend.session() as db:
+            return bool(db.execute("UPDATE runs SET status = 'running', worker_id = ?, heartbeat_at = ? "
+                                   "WHERE id = ? AND owner_id = ? AND status = 'queued'",
+                                   (worker_id, now().isoformat(), run_id, owner_id)))
+
+    def fail_run(self, run_id: str, owner_id: str, error: str) -> None:
+        """Mark an active run failed when its worker could not even produce a partial result."""
+        with self.backend.session() as db:
+            db.execute("UPDATE runs SET status = 'failed', completed_at = ?, errors = ? WHERE id = ? AND owner_id = ? "
+                       "AND status IN ('queued', 'running')",
+                       (now().isoformat(), json.dumps([error[:500]]), run_id, owner_id))
+
+    def heartbeat_runs(self, run_ids: list[str]) -> None:
+        """Keep runs that wait in this process's queue from being reaped as abandoned."""
+        if not run_ids:
+            return
+        marks = ",".join("?" * len(run_ids))
+        with self.backend.session() as db:
+            db.execute(f"UPDATE runs SET heartbeat_at = ? WHERE status = 'queued' AND id IN ({marks})",
+                       [now().isoformat(), *run_ids])
 
     def is_cancel_requested(self, run_id: str) -> bool:
         with self.backend.session() as db:
@@ -332,7 +380,8 @@ class Repository:
         """'Delete my data': every run (with its evidence), document, activity entry and preference of a user."""
         runs = [r.id for r in self.list_runs(owner_id, limit=100_000)]
         for run_id in runs:
-            self.delete_run(run_id, owner_id)
+            self.request_cancel(run_id, owner_id)  # a still-running worker stops, and its final save is skipped
+            self.delete_run(run_id, owner_id, allow_active=True)
         with self.backend.session() as db:
             db.execute("DELETE FROM documents WHERE owner_id = ?", (owner_id,))
             db.execute("DELETE FROM activity WHERE owner_id = ?", (owner_id,))

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import date
 
 from src.agents.base import RunContext
+from src.agents.gap_analyst import STOPPED_BY_USER
 from src.config import Settings
 from src.models.evidence import AgentEvent, AgentStatus
 from src.models.research import ResearchMode, ResearchRequest, is_demo_question, new_id
@@ -29,22 +30,31 @@ def initial_state(request: ResearchRequest, run_id: str) -> ResearchState:
         new_sources_last_iteration=0, provider_notes=[], events=[], search_log=[], warnings=[], errors=[])
 
 
-@research_trace
-def run_research(request: ResearchRequest, settings: Settings, repo=None, on_event: Callable[[AgentEvent], None] | None = None,
-                 provider_settings: ProviderSettings | None = None, llm: LLMClient | None = None,
-                 uploaded_documents: list[dict] | None = None, today: date | None = None,
-                 run_id: str | None = None, providers=None, owner_id: str = "local",
-                 worker_id: str | None = None) -> ResearchState:
-    """Execute one investigation. Persists the run (if `repo` is given) and returns the final state.
-
-    With a repository, progress is durable while the run executes: events, a progress snapshot and a heartbeat are
-    written in batches (see `EventSink`), so any session can follow the run with `Repository.get_progress`.
-    """
+def validate_request(request: ResearchRequest, owner_id: str) -> None:
+    """Who may run what. Raises before any work (or queue slot) is spent on a request that is not allowed."""
     if owner_id.startswith("guest:") and request.mode == ResearchMode.LIVE:
         raise PermissionError("Live research requires signing in. Guests can use demo mode.")
     if request.mode == ResearchMode.DEMO and not is_demo_question(request.question):
         raise ValueError("Demo mode only runs the preselected demo questions. Sign in and use live research for "
                          "your own question.")
+
+
+@research_trace
+def run_research(request: ResearchRequest, settings: Settings, repo=None, on_event: Callable[[AgentEvent], None] | None = None,
+                 provider_settings: ProviderSettings | None = None, llm: LLMClient | None = None,
+                 uploaded_documents: list[dict] | None = None, today: date | None = None,
+                 run_id: str | None = None, providers=None, owner_id: str = "local",
+                 worker_id: str | None = None, existing_run: bool = False,
+                 budget: RunBudget | None = None) -> ResearchState:
+    """Execute one investigation. Persists the run (if `repo` is given) and returns the final state.
+
+    With a repository, progress is durable while the run executes: events, a progress snapshot and a heartbeat are
+    written in batches (see `EventSink`), so any session can follow the run with `Repository.get_progress`.
+    `existing_run` means the run row was already created and claimed (by the `RunManager`). A stop requested by
+    the owner cancels `budget`: the workflow then skips further searches and LLM calls and reports what it has,
+    and the run ends as `cancelled`.
+    """
+    validate_request(request, owner_id)
     run_id = run_id or new_id("run")
     provider_settings = provider_settings or ProviderSettings()
     documents = uploaded_documents
@@ -54,12 +64,12 @@ def run_research(request: ResearchRequest, settings: Settings, repo=None, on_eve
                                              documents or [], provider_settings)
     if llm is None and request.use_llm and request.mode == ResearchMode.LIVE:
         llm = LLMClient(settings)
-    budget = RunBudget(request.budget())
+    budget = budget or RunBudget(request.budget())
     if repo is not None:
-        repo.create_run(run_id, request, owner_id, worker_id=worker_id)
-        repo.log_activity(owner_id, "run_started", run_id, {"question": request.question, "mode": request.mode.value,
-                                                           "depth": request.depth.value})
-        sink = EventSink(repo, run_id, owner_id, worker_id=worker_id, on_event=on_event,
+        if not existing_run:
+            repo.create_run(run_id, request, owner_id, worker_id=worker_id)
+            log_run_started(repo, run_id, request, owner_id)
+        sink = EventSink(repo, run_id, owner_id, worker_id=worker_id, on_event=on_event, on_cancel=budget.cancel,
                          flush_seconds=settings.run_event_flush_seconds,
                          heartbeat_seconds=settings.run_heartbeat_seconds).start()
     else:
@@ -100,19 +110,27 @@ def run_research(request: ResearchRequest, settings: Settings, repo=None, on_eve
                         else:
                             final[key] = value
             status = "completed" if final.get("report") else "failed"
+            if budget.cancelled:
+                status = "cancelled"
+                final["stop_reason"] = STOPPED_BY_USER
         except Exception as exc:  # the graph itself failed: keep whatever evidence exists
             logger.exception("Research run failed")
             final["errors"] = final.get("errors", []) + [f"Workflow error: {type(exc).__name__}: {str(exc)[:200]}"]
             status = "failed"
         final["usage"] = budget.snapshot(final.get("iteration", 0))
-        ctx.event("orchestrator", "completed" if status == "completed" else "failed",
+        ctx.event("orchestrator", status if status in ("completed", "cancelled") else "failed",
                   f"Research {status} in {final['usage'].elapsed_seconds}s.")
         final["events"] = events
     finally:
         if sink is not None:  # always stop the heartbeat, so a crashed run is reaped instead of looking alive
             sink.close()  # also writes the remaining events before the final save
-    if repo is not None:
-        repo.save_run_results(run_id, final, status, owner_id, events_persisted=bool(sink and sink.fully_persisted))
-        repo.log_activity(owner_id, "run_completed" if status == "completed" else "run_failed", run_id,
+    if repo is not None and repo.save_run_results(run_id, final, status, owner_id,
+                                                  events_persisted=bool(sink and sink.fully_persisted)):
+        repo.log_activity(owner_id, f"run_{status}", run_id,
                           {"sources": len(final.get("sources", [])), "seconds": final["usage"].elapsed_seconds})
     return final
+
+
+def log_run_started(repo, run_id: str, request: ResearchRequest, owner_id: str) -> None:
+    repo.log_activity(owner_id, "run_started", run_id, {"question": request.question, "mode": request.mode.value,
+                                                       "depth": request.depth.value})

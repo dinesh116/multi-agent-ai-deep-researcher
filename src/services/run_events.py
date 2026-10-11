@@ -66,15 +66,19 @@ class EventSink:
     """Numbers, buffers and persists a run's events, progress and heartbeat.
 
     Use as a context manager around the run: entering starts the heartbeat, leaving flushes everything.
+    Each write also reads the run's stop flag, so a stop requested from any session reaches `on_cancel` within one
+    flush window (or one heartbeat when the run is quiet).
     `events` is the canonical, ordered log; position i is sequence number i in the database.
     """
 
     def __init__(self, repo, run_id: str, owner_id: str, *, worker_id: str | None = None,
                  flush_seconds: float = 1.0, heartbeat_seconds: float = 15.0, batch_size: int = 20,
-                 on_event: Callable[[AgentEvent], None] | None = None, clock: Callable[[], float] = time.monotonic):
+                 on_event: Callable[[AgentEvent], None] | None = None, on_cancel: Callable[[], None] | None = None,
+                 clock: Callable[[], float] = time.monotonic):
         self.repo, self.run_id, self.owner_id, self.worker_id = repo, run_id, owner_id, worker_id
         self.flush_seconds, self.heartbeat_seconds, self.batch_size = flush_seconds, heartbeat_seconds, batch_size
-        self.on_event, self.clock = on_event, clock
+        self.on_event, self.on_cancel, self.clock = on_event, on_cancel, clock
+        self.cancel_requested = False  # the owner asked this run to stop (seen on a progress write)
         self.events: list[AgentEvent] = []
         self.tracker = ProgressTracker()
         self.active = True  # False once the database says the run is no longer queued/running
@@ -108,17 +112,20 @@ class EventSink:
                 pending = self.events[start:]
                 snapshot = self.tracker.snapshot()
             try:
-                still_active = self.repo.update_progress(self.run_id, self.owner_id, snapshot, pending, start,
-                                                         self.worker_id)
+                ack = self.repo.update_progress(self.run_id, self.owner_id, snapshot, pending, start, self.worker_id)
             except Exception as exc:  # progress is best effort; the final save writes the complete log
                 logger.warning("Progress write failed for a run: %s", type(exc).__name__)
                 return
             with self._lock:
                 self._last_flush = self.clock()
-                if still_active:
+                if ack:
                     self._persisted = start + len(pending)
                 else:
                     self.active = False
+                newly_cancelled = getattr(ack, "cancel_requested", False) and not self.cancel_requested
+                self.cancel_requested = self.cancel_requested or newly_cancelled
+            if newly_cancelled and self.on_cancel:
+                self.on_cancel()
 
     def _beat(self) -> None:
         while not self._stop.wait(self.heartbeat_seconds):

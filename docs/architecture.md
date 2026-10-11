@@ -16,7 +16,7 @@
 ## Layers
 
 ```
-app.py, app_pages/        Streamlit UI (welcome and five task pages). Research runs in a worker thread and reports through a queue
+app.py, app_pages/        Streamlit UI (welcome and five task pages). Pages submit research to the job runner and poll its progress from the database
 src/orchestration/        LangGraph StateGraph, typed state, budget tracker
 src/agents/               planner, retriever, source_evaluator, critical_analyst, gap_analyst,
                           insight_generator, data_visualizer, report_builder (eight graph agents) + qa (follow-up Q&A)
@@ -124,11 +124,28 @@ tables (`sources`, `passages`, `assessments`, `claims`, `matrix_rows`, `evidence
 `gaps`, `insights`, `charts`, `reports`, `events`, `search_log`, `qa_messages`) cascade on delete. `documents` are owner-scoped, as are runs and their children; `search_cache` (24 h TTL) is shared, while settings are scoped according to the repository API. Source ids are stable hashes of canonical URL or DOI,
 so the same source keeps the same id across runs.
 
+## Run execution
+
+`services/jobs.RunManager` is a process-wide job runner (one per app process, created with `st.cache_resource`).
+`submit` validates the request, enforces per-user (`MAX_ACTIVE_RUNS_PER_USER`) and overall (`MAX_QUEUED_RUNS`)
+limits counted in the database, creates a `queued` run and returns its id at once. A fixed pool of
+`MAX_CONCURRENT_RUNS` daemon worker threads claims queued runs (`queued → running`) and executes the workflow. Run
+states are `queued`, `running`, `completed`, `cancelled` and `failed`. Pages never execute research: the progress page
+polls the database in an `st.fragment(run_every=…)`, so any session can reattach to a run.
+
+Stopping is cooperative. A queued run is cancelled at once. For a running run the stop flag is stored, and the
+budget is cancelled: no further searches or LLM calls, `decide_route` routes to synthesis, and the remaining agents
+write a partial report from the evidence gathered so far with deterministic logic; the run ends as `cancelled`. In
+the same process the budget is cancelled immediately; from another instance the flag arrives with the worker's next
+progress write. A maintenance thread heartbeats this process's queued runs, reaps abandoned ones and purges old guest
+data. Active runs cannot be deleted from the library; "Delete my data" stops them first, and a run deleted while it
+executed is not re-created by its final save.
+
 Run execution is observable while it happens: `services/run_events.EventSink` numbers each agent event,
 buffers it and writes batches (with a progress snapshot and a heartbeat on `runs`) so any session can read progress
 with `Repository.get_progress`. Startup reaps only runs whose heartbeat is older than `RUN_STALE_AFTER_SECONDS`, so a
 restart never fails live runs on other instances sharing the database. See `docs/plans/run-execution.md` for the
-remaining phases (job runner, database-driven progress page, checkpoints, plan review).
+remaining phases (checkpoints and resume, plan review).
 
 ## Upgrade contracts
 
@@ -136,7 +153,7 @@ Charts are persisted as validated JSON in a run-owned `charts` table and cascade
 
 The chart extractor produces a series only within a single source and compatible unit. Each point must resolve to an exact stored passage quotation. It does not perform joins, currency conversion, inferred data filling, or automatic chart extraction from PDF/web tables. Narrative percentages remain individual indicators, preserving their source wording and synthetic status.
 
-The budget tracker reserves estimated tokens under a lock before each API attempt, counts retries against actual request limits, releases successful reservations into reported usage, and retains unknown usage conservatively. Costs use explicitly configured input/output rates. This is per-run accounting, without user quotas or a global worker limit. HTTP fetches already in progress are bounded by HTTP timeouts rather than forcibly cancelled at the run deadline.
+The budget tracker reserves estimated tokens under a lock before each API attempt, counts retries against actual request limits, releases successful reservations into reported usage, and retains unknown usage conservatively. Costs use explicitly configured input/output rates. This is per-run accounting; concurrency is bounded separately by the job runner (see Run execution). HTTP fetches already in progress are bounded by HTTP timeouts rather than forcibly cancelled at the run deadline.
 
 See `docs/deployment.md` for the hosted workflow checklist and `docs/security.md` for the authentication and trust-boundary controls.
 

@@ -21,7 +21,8 @@ from html import escape
 
 from src.config import APP_NAME, Settings, get_settings
 from src.database.repository import LOCAL_OWNER, Repository
-from src.models.run import RunBundle
+from src.models.run import ACTIVE_STATUSES, RunBundle
+from src.services.jobs import RunManager
 from src.search.registry import ProviderSettings
 
 DEFAULTS = {"depth": "standard", "max_iterations": 2, "mode": "live", "use_llm": True, "include_demo_banner": True}
@@ -50,6 +51,12 @@ def get_repo() -> Repository:
     repo.reap_stale_runs(settings.run_stale_after_seconds)  # only runs whose worker stopped heartbeating
     repo.purge_guest_data()
     return repo
+
+
+@st.cache_resource(on_release=lambda manager: manager.shutdown(timeout=1))
+def get_run_manager() -> RunManager:
+    """The process-wide research job runner (one per app process, shared by every session)."""
+    return RunManager.from_settings(get_repo(), get_settings())
 
 
 logger = logging.getLogger(__name__)
@@ -177,9 +184,21 @@ def load_selected_run() -> RunBundle | None:
         if bundle is None:
             st.session_state.pop("selected_run_id", None)
             return None
+        if bundle.summary.status in ACTIVE_STATUSES:  # still changing: never serve a stale copy later
+            return bundle
         cache.clear()
         cache[key] = bundle
     return cache[key]
+
+
+def active_run_id(owner_id: str) -> str | None:
+    """The user's most recent queued or running investigation, if any."""
+    return next((r.id for r in get_repo().list_runs(owner_id, limit=20) if r.status in ACTIVE_STATUSES), None)
+
+
+def open_progress(run_id: str) -> None:
+    select_run(run_id)
+    st.switch_page("app_pages/2_Research_Progress.py")
 
 
 def select_run(run_id: str) -> None:
@@ -243,7 +262,15 @@ def sidebar() -> None:
     with st.sidebar:
         if st.button("New research", icon=":material/add:", key="side_new", width="stretch"):
             new_research()
-        runs = [r for r in get_repo().list_runs(user.id, limit=6) if r.status != "running"][:3]
+        recent = get_repo().list_runs(user.id, limit=8)
+        active = [r for r in recent if r.status in ACTIVE_STATUSES]
+        if active:
+            st.markdown('<div class="ds-label" style="margin-top:14px">In progress</div>', unsafe_allow_html=True)
+            for run in active:
+                if st.button(run.question, key=f"active_{run.id}", icon=":material/progress_activity:",
+                             width="stretch", help=f"{run.status.capitalize()}: {run.question}"):
+                    open_progress(run.id)
+        runs = [r for r in recent if r.status not in ACTIVE_STATUSES][:3]
         if runs:
             st.markdown('<div class="ds-label" style="margin-top:14px">Recent research</div>', unsafe_allow_html=True)
             for run in runs:

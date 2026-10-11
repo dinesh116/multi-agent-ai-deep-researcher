@@ -44,6 +44,9 @@ class Settings:
     run_heartbeat_seconds: float = 15.0  # how often a running investigation proves it is alive
     run_stale_after_seconds: float = 120.0  # a running row without a heartbeat for this long is reaped as failed
     run_event_flush_seconds: float = 1.0  # batch window for persisting progress events
+    max_concurrent_runs: int = 2  # investigations executing at once in this app process
+    max_active_runs_per_user: int = 1  # queued + running investigations per user
+    max_queued_runs: int = 10  # queued + running investigations across all users before new ones are refused
 
     @property
     def uses_turso(self) -> bool:
@@ -95,5 +98,8 @@ def get_settings() -> Settings:
         # at least three missed heartbeats before a run is considered dead
         run_stale_after_seconds=max(30.0, 3 * heartbeat, float(_env("RUN_STALE_AFTER_SECONDS", "120"))),
         run_event_flush_seconds=max(0.1, float(_env("RUN_EVENT_FLUSH_SECONDS", "1"))),
+        max_concurrent_runs=max(1, int(_env("MAX_CONCURRENT_RUNS", "2"))),
+        max_active_runs_per_user=max(1, int(_env("MAX_ACTIVE_RUNS_PER_USER", "1"))),
+        max_queued_runs=max(1, int(_env("MAX_QUEUED_RUNS", "10"))),
         admin_emails=tuple(e.strip().lower() for e in (_env("ADMIN_EMAILS", "") or "").split(",") if e.strip()),
     )

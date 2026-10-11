@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS activity (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     owner_id TEXT NOT NULL,
-    kind TEXT NOT NULL,                -- login | run_started | run_completed | run_failed | run_deleted | qa | export | upload | data_deleted
+    kind TEXT NOT NULL,                -- login | run_started | run_completed | run_failed | run_cancelled | run_deleted | qa | export | upload | data_deleted
     run_id TEXT,
     detail TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL

@@ -212,7 +212,8 @@ AGENT_INFO = {
     "report_builder": ("✓", "ds-teal", "Writes the cited report and validates citations"),
 }
 STATUS_TAG = {"completed": ("Complete", "ds-complete"), "running": ("In progress", "ds-running"),
-              "failed": ("Failed", "ds-failed")}
+              "queued": ("Queued", "ds-running"), "failed": ("Failed", "ds-failed"),
+              "cancelled": ("Stopped", "ds-draft")}
 DEPTH_LABELS = {"quick": "Quick", "standard": "Standard", "deep": "Deep"}
 
 

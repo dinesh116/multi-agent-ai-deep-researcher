@@ -18,6 +18,7 @@ from src.orchestration.state import QueryTask, ResearchState
 
 PRIORITY_WEIGHT = {1: 1.0, 2: 0.8, 3: 0.6}
 VALUE_THRESHOLD = 0.35
+STOPPED_BY_USER = "Stopped by user: the report uses only the evidence gathered so far."
 MODIFIERS = {
     GapKind.UNANSWERED: ["evidence", "report data"],
     GapKind.THIN: ["study data", "independent analysis"],
@@ -37,6 +38,8 @@ def _gap_id(*parts: str) -> str:
 def decide_route(iteration: int, max_iterations: int, budget_exhausted: list[str], gaps: list[ResearchGap],
                  new_sources_last_iteration: int) -> tuple[str, str]:
     """Pure function: returns ("follow_up" | "synthesize", reason)."""
+    if "cancelled" in budget_exhausted:
+        return "synthesize", STOPPED_BY_USER
     if iteration >= max_iterations:
         return "synthesize", f"Iteration limit reached ({max_iterations} follow-up round(s))."
     hard = [b for b in budget_exhausted if b in ("searches", "time", "sources")]
