@@ -125,7 +125,16 @@ h1 em, h2 em, .ds-title em, .dr-h1 em { font-style: normal; color: var(--dr-acce
 [class*="st-key-recent_"] button:hover, [class*="st-key-active_"] button:hover { background: var(--dr-glass-strong);
   color: var(--dr-ink); }
 [class*="st-key-recent_"] button p, [class*="st-key-active_"] button p { white-space: nowrap; overflow: hidden;
-  text-overflow: ellipsis; font-size: 13px; }
+  text-overflow: ellipsis; font-size: 13px; text-align: left; }
+/* the hover-hint wrapper right-aligns and the label is centred: stretch every level and align left */
+[class*="st-key-recent_"] .stTooltipIcon, [class*="st-key-recent_"] [data-testid="stTooltipHoverTarget"],
+[class*="st-key-active_"] .stTooltipIcon, [class*="st-key-active_"] [data-testid="stTooltipHoverTarget"],
+[class*="st-key-recent_"] button, [class*="st-key-active_"] button { width: 100%; justify-content: flex-start; }
+[class*="st-key-recent_"] button > div, [class*="st-key-recent_"] button > div > span,
+[class*="st-key-active_"] button > div, [class*="st-key-active_"] button > div > span {
+  width: 100%; justify-content: flex-start; text-align: left; min-width: 0; }
+[class*="st-key-recent_"] [data-testid="stMarkdownContainer"],
+[class*="st-key-active_"] [data-testid="stMarkdownContainer"] { flex: 1 1 auto; min-width: 0; text-align: left; }
 [class*="st-key-active_"] [data-testid="stIconMaterial"] { color: var(--dr-accent); animation: dr-spin 2.4s linear infinite; }
 .ds-profile { display: flex; align-items: center; gap: 10px; padding: 6px 2px; }
 .ds-avatar { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: var(--dr-accent);
