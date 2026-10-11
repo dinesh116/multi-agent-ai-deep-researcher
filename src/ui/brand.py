@@ -97,11 +97,16 @@ def _brand_css() -> str:
     """DAMRU beside the sidebar logo. st.logo cannot carry text, so the name and a hover tooltip are drawn with CSS
     on the logo's container (the first child of the sidebar header)."""
     logo = '[data-testid="stSidebarHeader"] > :first-child'  # a div, or the stLogoLink button when the logo links home
-    return ('[data-testid="stSidebarHeader"] { position: relative; z-index: 1000; }\n'  # tooltip above the menu
-            f'{logo} {{ position: relative; display: flex; align-items: center; gap: 10px; opacity: 1; }}\n'
-            f'{logo}::after {{ content: "{BRAND_NAME}"; font: 700 21px Sora, sans-serif; letter-spacing: .14em; '
+    # Logo and name are centred in the pane; the collapse button is taken out of the row so it does not offset them.
+    return ('[data-testid="stSidebarHeader"] { position: relative; z-index: 1000; justify-content: center; }\n'
+            '[data-testid="stSidebarHeader"] [data-testid="stSidebarCollapseButton"] { position: absolute; right: 0.5rem; '
+            "top: 50%; transform: translateY(-50%); }\n"
+            f'{logo} {{ position: relative; display: flex; align-items: center; justify-content: center; gap: 10px; '
+            "margin: 0 auto; opacity: 1; }\n"
+            f'{logo}::after {{ content: "{BRAND_NAME}"; font: 700 14px Sora, sans-serif; letter-spacing: .14em; '
             "color: var(--dr-ink); opacity: 1; }\n"
-            f'{logo}:hover::before {{ content: "{BRAND_EXPANSION}"; position: absolute; left: 0; top: calc(100% + 8px); '
+            f'{logo}:hover::before {{ content: "{BRAND_EXPANSION}"; position: absolute; left: 50%; top: calc(100% + 8px); '
+            "transform: translateX(-50%); "
             "z-index: 1000; width: max-content; max-width: 230px; padding: 8px 11px; border-radius: 10px; "
             "background: var(--dr-node); border: 1px solid var(--dr-line); box-shadow: 0 10px 30px var(--dr-shadow); "
             "font: 500 12.5px/1.4 'DM Sans', sans-serif; letter-spacing: 0; color: var(--dr-ink); white-space: normal; }")
