@@ -11,6 +11,7 @@ from html import escape
 
 import streamlit as st
 
+from src.evidence.citations import strip_citations  # noqa: F401  (re-exported for the pages)
 from src.ui.brand import BRAND_CSS, ICON_CSS
 from src.models.evidence import ORIGIN_LABELS, Origin, Source, SourceAssessment
 

@@ -1,8 +1,10 @@
 """Page 7: Research library. The current user's own investigations and activity (private per user)."""
+import re
+
 import pandas as pd
 import streamlit as st
 
-from src.ui.components import DEPTH_LABELS, ago, card, eyebrow, mode_tag, status_tag
+from src.ui.components import DEPTH_LABELS, ago, card, eyebrow, mode_tag, status_tag, strip_citations
 from src.models.run import ACTIVE_STATUSES
 from src.ui.state import current_user, get_repo, new_research, open_progress, open_run, selected_run_id
 
@@ -70,7 +72,9 @@ with tab_runs:
                 with b2.popover("", icon=":material/more_horiz:"):
                     if run.summary:
                         st.markdown("**Summary of findings**")
-                        st.markdown(run.summary[:1200])
+                        # Inline " - **Finding...**" items are put on their own lines as a bulleted list.
+                        summary = strip_citations(run.summary)
+                        st.markdown(re.sub(r"\s+-\s+(?=\*\*)", "\n- ", summary)[:1200])
                     if live:
                         st.write("This investigation is still in progress. Stop it from its live view before "
                                  "deleting it.")

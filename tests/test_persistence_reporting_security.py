@@ -1,4 +1,6 @@
 """Persistence & history, report rendering/export, Q&A, prompt-injection resistance."""
+import re
+
 import pytest
 
 from src.agents.qa import answer_question
@@ -90,7 +92,9 @@ def test_report_structure_and_citations(stored_run):
 def test_report_exports(stored_run):
     _, bundle = stored_run
     md = to_markdown(bundle.report, demo=True)
-    assert md.startswith("# Research report") and "SYNTHETIC DEMO REPORT" in md and "## References" in md
+    assert md.startswith("# Research report") and "SYNTHETIC DEMO REPORT" in md and "## Sources consulted" in md
+    assert not re.search(r"\[\d+\]", md) and "Citation traceability" not in md
+    assert "| Claim | Agreement | Quality |" in md
     html = to_html(bundle.report, demo=True)
     assert html.startswith("<!doctype html>") and "<h2>Executive summary</h2>" in html
     pdf = to_pdf(bundle.report, demo=True)

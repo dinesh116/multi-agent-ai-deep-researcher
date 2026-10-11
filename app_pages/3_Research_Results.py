@@ -6,7 +6,7 @@ import streamlit as st
 
 from src.models.run import ACTIVE_STATUSES
 from src.reporting.render import to_html, to_markdown, to_pdf
-from src.ui.components import DEPTH_LABELS, card, demo_banner, eyebrow, html
+from src.ui.components import DEPTH_LABELS, card, demo_banner, eyebrow, html, strip_citations
 from src.ui.state import current_user, effective_settings, get_repo, preference, require_run
 from src.ui.views import analysis, evidence, insights, qa, visualizations, report as report_view
 
@@ -65,9 +65,6 @@ if report is not None:
 st.write("")
 
 # ------------------------------------------------------------------ overview helpers
-ref = {r["source_id"]: r["n"] for r in (report.references if report else [])}
-checks = report.citation_checks if report else []
-passed = sum(c.valid for c in checks)
 rows = bundle.matrix
 backed = sum(r.agreement.value in ("strong", "moderate") for r in rows)
 share = backed / len(rows) if rows else 0
@@ -75,31 +72,25 @@ strength, strength_css = (("Strong", "ok") if share >= 0.5 else ("Moderate", "ok
                           else ("Limited", "warn"))
 
 
-def markers(source_ids: list[str]) -> str:
-    return "".join(f"[{ref[s]}]" for s in dict.fromkeys(source_ids) if s in ref)
-
-
 def overview() -> None:
     main, side = st.columns([2.6, 1], gap="medium")
     with main, card("overview"):
         html('<div style="display:flex;align-items:center;gap:11px"><span class="ds-icon ds-purple">✧</span>'
              '<div><b style="font:700 15px Manrope,sans-serif">Executive summary</b><br><span class="ds-muted">'
-             'Checked by the citation validator</span></div><span style="margin-left:auto" class="ds-tag ds-complete">'
-             f"✓ {passed}/{len(checks)} citations verified</span></div>")
+             f"Drawn from {len(bundle.sources)} sources</span></div></div>")
         section = report.section("executive_summary") if report else None
-        st.markdown(section.content if section else "_No summary was produced._")
+        st.markdown(strip_citations(section.content) if section else "_No summary was produced._")
         top = sorted(bundle.insights, key=lambda i: (i.kind.value not in ("finding", "disagreement"),
                                                      {"high": 0, "medium": 1}.get(i.confidence, 2)))[:3]
         if top:
             html('<div class="ds-label" style="margin-top:14px">Key findings</div>' + "".join(
                 f'<div class="ds-finding"><span>{n:02d}</span><p><b>{escape(i.statement)}</b> '
-                f'<span class="ds-muted">{escape(i.label.value)} · {escape(i.confidence)} confidence '
-                f"{markers(i.source_ids)}</span></p></div>" for n, i in enumerate(top, start=1)))
+                f'<span class="ds-muted">{escape(i.label.value)} · {escape(i.confidence)} confidence</span></p></div>'
+                for n, i in enumerate(top, start=1)))
     with side, card("glance"):
         html('<b style="font:700 14px Manrope,sans-serif">At a glance</b>'
              f'<div class="ds-stat"><span>Sources reviewed</span><b>{len(bundle.sources)}</b></div>'
              f'<div class="ds-stat"><span>Claims extracted</span><b>{len(bundle.claims)}</b></div>'
-             f'<div class="ds-stat"><span>Citations verified</span><b>{passed} / {len(checks)}</b></div>'
              f'<div class="ds-stat"><span>Contradictions</span><b>{len(bundle.contradictions)}</b></div>'
              f'<div class="ds-stat"><span>Evidence strength</span><b class="{strength_css}">{strength}</b></div>'
              '<hr style="margin:10px 0">'
