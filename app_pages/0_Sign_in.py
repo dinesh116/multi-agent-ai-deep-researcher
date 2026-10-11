@@ -35,10 +35,12 @@ with st.container(key="card-signin"):
         else:
             label = f"{'Sign up' if creating else 'Continue'} with {PROVIDERS[name]}"
         st.button(label, key=f"login_{name}", icon=ICONS[name], width="stretch", on_click=login, args=(name,))
-    if creating:
-        st.caption("Your account is created the first time you sign in. With email, you choose a password on our "
-                   "sign-in provider's secure page and confirm your address there. This app never sees your password.")
-    else:
+    email = "email" in providers
+    if creating and providers:
+        st.caption("Your account is created the first time you sign in."
+                   + (" With email, you choose a password on our sign-in provider's secure page and confirm your "
+                      "address there. This app never sees your password." if email else ""))
+    elif email:
         st.caption("Email sign-in opens our sign-in provider's secure page, where you can also reset a forgotten "
                    "password.")
     st.divider()

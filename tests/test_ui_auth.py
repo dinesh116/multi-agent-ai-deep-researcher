@@ -174,6 +174,11 @@ def test_signed_in_landing_shows_team_graph_and_composer():
     page = " ".join(h.proto.body for h in at.get("html"))
     assert "Get to know your Agents team" in page and page.count('<article class="dr-tile') == 8
     assert "How an investigation flows" in page and "run side by side" in page  # parallel branch is shown
+    assert page.count('<article class="dr-ctile') == 2  # cross-cutting agents, separate from the pipeline tiles
+    assert "Observability &amp; Telemetry" in page and "Cost Optimizer" in page
+    assert "4 · Cross-cutting · always on" in page
+    assert page.count('class="dr-abs dr-tap') == 7  # every step feeds the always-on lane
+    assert "Model routing" not in page  # only capabilities the app really has
     assert "app/static/hero.jpg" in page
 
 
@@ -232,3 +237,12 @@ def test_display_name_is_escaped_in_the_greeting(monkeypatch):
     assert not at.exception
     greeting = next(m.value for m in at.markdown if "dr-greet" in m.value)
     assert "<img" not in greeting and "&lt;img" in greeting
+
+
+def test_damru_name_and_expansion_next_to_logo():
+    from src.ui.brand import BRAND_CSS, BRAND_EXPANSION, BRAND_NAME, signin_brand_html
+    assert BRAND_NAME == "DAMRU" and BRAND_EXPANSION == "Deep Agent for Multimodal Research and Understanding"
+    assert f'title="{BRAND_EXPANSION}">{BRAND_NAME}</abbr>' in signin_brand_html("Welcome back", "x")  # hover text
+    assert f'content: "{BRAND_NAME}"' in BRAND_CSS and f'content: "{BRAND_EXPANSION}"' in BRAND_CSS  # sidebar logo
+    at = app(with_auth=False)
+    assert any(BRAND_EXPANSION in h.proto.body for h in at.get("html"))  # the brand CSS is injected on every page

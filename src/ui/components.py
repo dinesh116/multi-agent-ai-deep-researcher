@@ -11,7 +11,7 @@ from html import escape
 
 import streamlit as st
 
-from src.ui.brand import ICON_CSS
+from src.ui.brand import BRAND_CSS, ICON_CSS
 from src.models.evidence import ORIGIN_LABELS, Origin, Source, SourceAssessment
 
 CSS = """
@@ -33,6 +33,7 @@ CSS = """
   --dr-ok: light-dark(#047857, #6EE7B7); --dr-ok-soft: light-dark(rgba(5,150,105,.12), rgba(52,211,153,.14));
   --dr-warn: light-dark(#92400E, #FCD34D); --dr-warn-soft: light-dark(rgba(217,119,6,.13), rgba(251,191,36,.14));
   --dr-bad: light-dark(#B91C1C, #FCA5A5); --dr-bad-soft: light-dark(rgba(220,38,38,.10), rgba(248,113,113,.14));
+  --dr-amber: light-dark(#B45309, #FBBF24);
   --dr-pink: light-dark(#BE185D, #F9A8D4); --dr-pink-soft: light-dark(rgba(190,24,93,.10), rgba(244,114,182,.14));
   --dr-glow-a: light-dark(rgba(10,126,164,.16), rgba(59,220,255,.18));
   --dr-glow-b: light-dark(rgba(90,73,214,.14), rgba(150,132,255,.16));
@@ -183,8 +184,12 @@ h1 em, h2 em, .ds-title em, .dr-h1 em { font-style: normal; color: var(--dr-acce
 .st-key-hero_demo button, .st-key-hero_signin button { min-height: 50px; padding: 0 26px; font-size: 15px; }
 .st-key-hero_demo button p, .st-key-hero_signin button p { font-size: 15px; font-weight: 700; }
 .dr-signin-brand { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; margin-bottom: 6px; }
-.dr-signin-brand img { width: 68px; height: 68px; border-radius: 50%; border: 1px solid var(--dr-line);
+.dr-brand-row { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.dr-wordmark { font: 700 26px Sora, sans-serif; letter-spacing: .14em; color: var(--dr-ink); text-decoration: none; cursor: help; }
+.dr-signin-brand img { width: 102px; height: 102px; border-radius: 50%; border: 1px solid var(--dr-line);
   box-shadow: 0 0 30px var(--dr-glow-a); }
+/* sidebar/header logo (st.logo, size="large" = 2rem): 50% larger */
+img.stLogo { height: 3rem; max-height: 3rem; width: auto; }  /* sidebar (stSidebarLogo) and collapsed header */
 .dr-signin-brand h1 { margin: 0; padding: 0; font: 600 24px Sora, sans-serif; letter-spacing: -.02em; }
 .dr-signin-brand p { margin: 0; color: var(--dr-muted); font-size: 15px; }
 .st-key-card-signin { max-width: 440px; margin: 2vh auto 0; padding: 30px 28px; border-radius: 28px; }
@@ -220,6 +225,46 @@ h1 em, h2 em, .ds-title em, .dr-h1 em { font-style: normal; color: var(--dr-acce
 .dr-tile-num { font: 500 12px 'JetBrains Mono', monospace; color: var(--dr-muted); }
 .dr-tile h3 { margin: 0 0 4px; padding: 0; font: 600 15px Sora, sans-serif; }
 .dr-tile p { margin: 0; font-size: 13px; color: var(--dr-muted); }
+/* cross-cutting agents: amber, dashed, always on */
+.dr-cross-head { display: flex; align-items: center; gap: 12px; margin: 20px 0 12px; }
+.dr-cross-head span { font: 500 11px 'JetBrains Mono', monospace; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--dr-warn); }
+.dr-cross-head i { flex: 1; height: 1px; background: var(--dr-line); }
+.dr-cross { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.dr-ctile { position: relative; overflow: hidden; padding: 18px; border-radius: 20px; border: 1.5px dashed var(--dr-amber);
+  background: var(--dr-glass); backdrop-filter: var(--dr-blur); display: flex; gap: 16px; align-items: flex-start; }
+.dr-ctile .sweep { position: absolute; top: 0; bottom: 0; width: 34%; pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--dr-warn-soft), transparent); animation: dr-sweep 3.2s ease-in-out infinite; }
+.dr-ctile .dr-badge-icon { width: 52px; height: 52px; flex: none; }
+.dr-ctile .ring { border-color: var(--dr-amber); animation-duration: 6s; }
+.dr-ctile .core { width: 40px; height: 40px; background: var(--dr-warn-soft); color: var(--dr-warn); }
+.dr-on { position: absolute; right: 2px; top: 2px; width: 9px; height: 9px; border-radius: 50%; background: var(--dr-amber);
+  animation: dr-pulse 2s infinite; }
+.dr-ctile-body { position: relative; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.dr-ctile-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dr-ctile-name h3 { margin: 0; padding: 0; font: 600 15px Sora, sans-serif; }
+.dr-ctile-name span { font: 500 10.5px 'JetBrains Mono', monospace; letter-spacing: .06em; text-transform: uppercase; color: var(--dr-warn); }
+.dr-ctile p { margin: 0; font-size: 13px; color: var(--dr-muted); }
+.dr-ctags { display: flex; flex-wrap: wrap; gap: 6px; }
+.dr-ctag { padding: 3px 9px; border-radius: 999px; font-size: 11.5px; border: 1px solid var(--dr-line); background: var(--dr-node);
+  color: var(--dr-soft); }
+.dr-cross-key { width: 18px; height: 10px; border-radius: 4px; border: 1.5px dashed var(--dr-amber); }
+.dr-tap { top: 340px; width: 2px; height: 22px; background-image: radial-gradient(circle, var(--dr-amber) 1.1px, transparent 1.5px);
+  background-size: 2px 7px; }
+.dr-cband { left: 0; right: 0; top: 362px; height: 98px; border-radius: 18px; border: 1.5px dashed var(--dr-amber); background: var(--dr-panel); }
+.dr-cband-title { left: 0; right: 0; top: 370px; text-align: center; font: 500 10.5px 'JetBrains Mono', monospace;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--dr-warn); }
+.dr-clane { left: 14px; right: 14px; height: 30px; display: flex; align-items: center; gap: 12px; }
+.dr-clane-name { display: flex; align-items: center; gap: 8px; flex: none; width: 220px; font-size: 12.5px; font-weight: 700; }
+.dr-clane i { flex: 1; height: 4px; background-image: radial-gradient(circle, var(--dr-amber) 1.5px, transparent 2px); background-size: 14px 4px; }
+.dr-clane-out { flex: none; font: 500 10.5px 'JetBrains Mono', monospace; color: var(--dr-warn); }
+.dr-ccore { width: 28px; height: 28px; flex: none; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: var(--dr-warn-soft); color: var(--dr-warn); }
+.dr-vband.amber { color: var(--dr-warn); }
+.dr-vcross { position: relative; margin-left: 60px; padding: 10px 12px; border-radius: 14px; border: 1.5px dashed var(--dr-amber);
+  background: var(--dr-panel); display: flex; flex-direction: column; gap: 10px; }
+.dr-vcross > div { display: flex; align-items: center; gap: 10px; } .dr-vcross b { display: block; font-size: 13.5px; }
+.dr-vcross small { display: block; font-size: 12px; color: var(--dr-muted); }
 /* workflow graph */
 .dr-wf { box-sizing: border-box; padding: 26px 28px 28px; border-radius: 24px; border: 1px solid var(--dr-line);
   background: var(--dr-glass); backdrop-filter: var(--dr-blur); }
@@ -234,7 +279,7 @@ h1 em, h2 em, .ds-title em, .dr-h1 em { font-style: normal; color: var(--dr-acce
 .dr-dots.col { background-size: 4px 14px; }
 .flow-x { animation: dr-flowx .9s linear infinite; } .flow-xr { animation: dr-flowxr .9s linear infinite; }
 .flow-yd { animation: dr-flowyd .9s linear infinite; } .flow-yu { animation: dr-flowyu .9s linear infinite; }
-.dr-wf-h { position: relative; height: 338px; }
+.dr-wf-h { position: relative; height: 462px; }
 .dr-wf-v { display: none; }
 .dr-abs { position: absolute; }
 .dr-band { border-radius: 18px; border: 1px solid var(--dr-line); background: var(--dr-panel); }
@@ -288,6 +333,7 @@ h1 em, h2 em, .ds-title em, .dr-h1 em { font-style: normal; color: var(--dr-acce
 .dr-vpair > em { grid-column: 1 / span 2; text-align: center; font-style: normal; font-size: 12px; font-weight: 600;
   color: var(--dr-accent-text); }
 @keyframes dr-spin { to { transform: rotate(360deg); } }
+@keyframes dr-sweep { 0% { left: -40%; } 100% { left: 110%; } }
 @keyframes dr-relay { 0% { opacity: 0; } 4% { opacity: 1; } 14% { opacity: 1; } 22% { opacity: 0; } 100% { opacity: 0; } }
 @keyframes dr-travel { 0% { left: 0%; } 100% { left: 92%; } }
 @keyframes dr-pulse { 0% { box-shadow: 0 0 0 0 var(--dr-glow-a); } 70% { box-shadow: 0 0 0 10px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
@@ -296,11 +342,12 @@ h1 em, h2 em, .ds-title em, .dr-h1 em { font-style: normal; color: var(--dr-acce
 @keyframes dr-flowyd { to { background-position: 0 14px; } } @keyframes dr-flowyu { to { background-position: 0 -14px; } }
 @media (max-width: 860px) {
   .dr-team { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dr-cross { grid-template-columns: minmax(0, 1fr); }
   .dr-wf-h { display: none; } .dr-wf-v { display: flex; flex-direction: column; gap: 10px; position: relative; }
   .dr-wf { padding: 20px 16px; } .dr-float.a { left: 6px; } .dr-float.b { right: 6px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .dr-tile .relay, .dr-node-icon .relay, .dr-badge-icon .ring, .flow-x, .flow-xr, .flow-yd, .flow-yu, .dr-lane i,
+  .dr-ctile .sweep, .dr-on, .dr-tap, .dr-clane i, .dr-tile .relay, .dr-node-icon .relay, .dr-badge-icon .ring, .flow-x, .flow-xr, .flow-yd, .flow-yu, .dr-lane i,
   .dr-glow, .dr-live-dot, .dr-float, [class*="st-key-active_"] [data-testid="stIconMaterial"] { animation: none; }
 }
 /* ---------- progress, results and library (existing class names) ---------- */
@@ -382,7 +429,7 @@ DEPTH_LABELS = {"quick": "Quick", "standard": "Standard", "deep": "Deep"}
 
 def inject_css() -> None:
     """The glass skin (CSS was requested for the glassmorphic design; colours themselves come from config.toml)."""
-    st.html(CSS.replace("</style>", ICON_CSS + "\n</style>"))
+    st.html(CSS.replace("</style>", ICON_CSS + "\n" + BRAND_CSS + "\n</style>"))
 
 
 def html(markup: str) -> None:
