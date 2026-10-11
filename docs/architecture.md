@@ -124,6 +124,12 @@ tables (`sources`, `passages`, `assessments`, `claims`, `matrix_rows`, `evidence
 `gaps`, `insights`, `charts`, `reports`, `events`, `search_log`, `qa_messages`) cascade on delete. `documents` are owner-scoped, as are runs and their children; `search_cache` (24 h TTL) is shared, while settings are scoped according to the repository API. Source ids are stable hashes of canonical URL or DOI,
 so the same source keeps the same id across runs.
 
+Run execution is observable while it happens: `services/run_events.EventSink` numbers each agent event,
+buffers it and writes batches (with a progress snapshot and a heartbeat on `runs`) so any session can read progress
+with `Repository.get_progress`. Startup reaps only runs whose heartbeat is older than `RUN_STALE_AFTER_SECONDS`, so a
+restart never fails live runs on other instances sharing the database. See `docs/plans/run-execution.md` for the
+remaining phases (job runner, database-driven progress page, checkpoints, plan review).
+
 ## Upgrade contracts
 
 Charts are persisted as validated JSON in a run-owned `charts` table and cascade on run deletion. Source row metadata is stored with uploaded documents; visualization notes are stored with runs. Additive migrations preserve existing databases, and old runs load with empty chart defaults. Existing uploads without structured metadata must be uploaded again. CSV extraction limits remain in force. Both SQLite and the local libSQL backend have persistence and ownership tests; hosted Turso connectivity is not established by those tests.

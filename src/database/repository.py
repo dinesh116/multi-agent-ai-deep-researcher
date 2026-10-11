@@ -16,7 +16,7 @@ from src.database.backend import SQLiteBackend, make_backend
 from src.models.evidence import (AgentEvent, AgentStatus, Claim, Contradiction, EvidenceLink, Insight, MatrixRow,
                                  Passage, Report, ResearchGap, Source, SourceAssessment)
 from src.models.research import BudgetUsage, ResearchPlan, ResearchRequest, new_id, now
-from src.models.run import RunBundle, RunSummary
+from src.models.run import RunBundle, RunProgress, RunSummary
 from src.models.visualization import EvidenceChart
 
 SCHEMA = Path(__file__).with_name("schema.sql")
@@ -64,7 +64,14 @@ class Repository:
             db.execute("ALTER TABLE documents ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'")
         if "visualization_notes" not in run_cols:
             db.execute("ALTER TABLE runs ADD COLUMN visualization_notes TEXT NOT NULL DEFAULT '[]'")
+        # Durable execution: which process runs it, when it last proved alive, cancellation and live progress.
+        for column, ddl in (("worker_id", "TEXT"), ("heartbeat_at", "TEXT"),
+                            ("cancel_requested", "INTEGER NOT NULL DEFAULT 0"),
+                            ("progress", "TEXT NOT NULL DEFAULT '{}'")):
+            if column not in run_cols:
+                db.execute(f"ALTER TABLE runs ADD COLUMN {column} {ddl}")
         db.execute("CREATE INDEX IF NOT EXISTS idx_runs_owner ON runs(owner_id, created_at)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status, heartbeat_at)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_documents_owner ON documents(owner_id)")
 
     # ------------------------------------------------------------------ users & activity
@@ -103,14 +110,18 @@ class Repository:
                 "FROM users u ORDER BY u.last_login DESC")
 
     # ------------------------------------------------------------------ runs
-    def create_run(self, run_id: str, request: ResearchRequest, owner_id: str = LOCAL_OWNER) -> None:
+    def create_run(self, run_id: str, request: ResearchRequest, owner_id: str = LOCAL_OWNER, status: str = "running",
+                   worker_id: str | None = None) -> None:
+        stamp = now().isoformat()
         with self.backend.session() as db:
-            db.execute("INSERT INTO runs (id, owner_id, question, status, mode, created_at, parent_run_id, request) "
-                       "VALUES (?, ?, ?, 'running', ?, ?, ?, ?)",
-                       (run_id, owner_id, request.question, request.mode.value, now().isoformat(),
-                        request.parent_run_id, request.model_dump_json()))
+            db.execute("INSERT INTO runs (id, owner_id, question, status, mode, created_at, parent_run_id, request, "
+                       "worker_id, heartbeat_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                       (run_id, owner_id, request.question, status, request.mode.value, stamp,
+                        request.parent_run_id, request.model_dump_json(), worker_id, stamp))
 
-    def save_run_results(self, run_id: str, state: dict, status: str, owner_id: str = LOCAL_OWNER) -> None:
+    def save_run_results(self, run_id: str, state: dict, status: str, owner_id: str = LOCAL_OWNER,
+                         events_persisted: bool = False) -> None:
+        """Write the final run. With `events_persisted`, the event log already written by an EventSink is kept."""
         report: Report | None = state.get("report")
         exec_summary = report.section("executive_summary").content if report and report.section("executive_summary") else ""
         counts = {"sources": len(state.get("sources", [])), "claims": len(state.get("claims", [])),
@@ -138,7 +149,7 @@ class Repository:
             db.execute("UPDATE runs SET visualization_notes = ? WHERE id = ? AND owner_id = ?",
                        (json.dumps(state.get("visualization_notes", [])), run_id, owner_id))
             for table in RUN_CHILD_TABLES:
-                if table != "qa_messages":
+                if table != "qa_messages" and not (events_persisted and table == "events"):
                     db.execute(f"DELETE FROM {table} WHERE run_id = ?", (run_id,))
             db.insert_many("sources", ("run_id", "id", "title", "url", "source_type", "origin", "published_date", "data"), [
                 (run_id, s.id, s.title, s.url, s.source_type.value, s.origin.value,
@@ -164,9 +175,8 @@ class Repository:
             if report:
                 db.execute("INSERT INTO reports (run_id, title, data, created_at) VALUES (?, ?, ?, ?)",
                            (run_id, report.title, _dump(report), report.created_at.isoformat()))
-            db.insert_many("events", ("run_id", "seq", "timestamp", "agent", "status", "message", "data"), [
-                (run_id, n, e.timestamp.isoformat(), e.agent, e.status, e.message, _dump(e))
-                for n, e in enumerate(state.get("events", []))])
+            if not events_persisted:
+                self._insert_events(db, run_id, state.get("events", []), 0)
             db.insert_many("search_log", ("run_id", "seq", "provider", "query", "status", "data"), [
                 (run_id, n, r.provider, r.query, r.status, _dump(r)) for n, r in enumerate(state.get("search_log", []))])
 
@@ -229,11 +239,82 @@ class Repository:
             db.execute("DELETE FROM runs WHERE id = ? AND owner_id = ?", (run_id, owner_id))
             return True
 
-    def mark_stale_runs(self) -> None:
-        """Runs left 'running' by a closed app session are marked failed on startup."""
+    # ------------------------------------------------------------------ live progress (durable execution)
+    @staticmethod
+    def _insert_events(db, run_id: str, events: list[AgentEvent], start_seq: int) -> None:
+        db.insert_many("events", ("run_id", "seq", "timestamp", "agent", "status", "message", "data"), [
+            (run_id, start_seq + n, e.timestamp.isoformat(), e.agent, e.status, e.message, _dump(e))
+            for n, e in enumerate(events)])
+
+    def append_events(self, run_id: str, events: list[AgentEvent], start_seq: int) -> None:
+        """Persist a batch of events numbered from `start_seq` (re-sending a batch is harmless)."""
+        if events:
+            with self.backend.session() as db:
+                self._insert_events(db, run_id, events, start_seq)
+
+    def update_progress(self, run_id: str, owner_id: str, progress: dict | None = None,
+                        events: list[AgentEvent] = (), start_seq: int = 0, worker_id: str | None = None) -> bool:
+        """Heartbeat (plus optional progress snapshot and events) in one transaction.
+
+        Returns False when the run is no longer active (finished, reaped or deleted), so the caller can stop.
+        """
         with self.backend.session() as db:
-            db.execute("UPDATE runs SET status = 'failed', errors = ? WHERE status = 'running'",
-                       (json.dumps(["The app stopped before this run finished."]),))
+            changed = db.execute(
+                "UPDATE runs SET heartbeat_at = ?, worker_id = COALESCE(?, worker_id), "
+                "progress = COALESCE(?, progress) WHERE id = ? AND owner_id = ? AND status IN ('queued', 'running')",
+                (now().isoformat(), worker_id, json.dumps(progress) if progress is not None else None, run_id, owner_id))
+            if changed and events:
+                self._insert_events(db, run_id, list(events), start_seq)
+        return bool(changed)
+
+    def get_progress(self, run_id: str, owner_id: str, after_seq: int = -1) -> RunProgress | None:
+        """Status, progress snapshot and events newer than `after_seq`; None for unknown or foreign runs."""
+        with self.backend.session() as db:
+            run = db.one("SELECT id, question, status, mode, created_at, heartbeat_at, cancel_requested, progress, "
+                         "errors, request FROM runs WHERE id = ? AND owner_id = ?", (run_id, owner_id))
+            if not run:
+                return None
+            rows = db.rows("SELECT seq, data FROM events WHERE run_id = ? AND seq > ? ORDER BY seq",
+                           (run_id, after_seq))
+        return RunProgress(
+            run_id=run["id"], question=run["question"], status=run["status"], mode=run["mode"],
+            depth=str(json.loads(run["request"] or "{}").get("depth", "")), created_at=run["created_at"],
+            heartbeat_at=run["heartbeat_at"], cancel_requested=bool(run["cancel_requested"]),
+            progress=json.loads(run["progress"] or "{}"), errors=json.loads(run["errors"] or "[]"),
+            events=[AgentEvent.model_validate_json(r["data"]) for r in rows],
+            last_seq=rows[-1]["seq"] if rows else after_seq)
+
+    def request_cancel(self, run_id: str, owner_id: str) -> bool:
+        """Ask an active run to stop; the worker notices on its next check. False if not active or not owned."""
+        with self.backend.session() as db:
+            return bool(db.execute("UPDATE runs SET cancel_requested = 1 WHERE id = ? AND owner_id = ? "
+                                   "AND status IN ('queued', 'running')", (run_id, owner_id)))
+
+    def is_cancel_requested(self, run_id: str) -> bool:
+        with self.backend.session() as db:
+            row = db.one("SELECT cancel_requested FROM runs WHERE id = ?", (run_id,))
+        return bool(row and row["cancel_requested"])
+
+    def count_active_runs(self, owner_id: str | None = None) -> int:
+        """Queued or running runs, for one owner or (None) across all owners."""
+        sql = "SELECT COUNT(*) AS n FROM runs WHERE status IN ('queued', 'running')"
+        with self.backend.session() as db:
+            row = db.one(sql + " AND owner_id = ?", (owner_id,)) if owner_id else db.one(sql)
+        return int(row["n"])
+
+    def reap_stale_runs(self, stale_after_seconds: float) -> list[str]:
+        """Fail active runs whose worker stopped sending heartbeats (process stopped or crashed).
+
+        Runs with a recent heartbeat are left alone, even when another app instance owns them.
+        """
+        cutoff = (now() - timedelta(seconds=stale_after_seconds)).isoformat()
+        stale = "status IN ('queued', 'running') AND (heartbeat_at IS NULL OR heartbeat_at < ?)"
+        with self.backend.session() as db:
+            ids = [r["id"] for r in db.rows(f"SELECT id FROM runs WHERE {stale}", (cutoff,))]
+            if ids:
+                db.execute(f"UPDATE runs SET status = 'failed', completed_at = ?, errors = ? WHERE {stale}",
+                           (now().isoformat(), json.dumps(["The app stopped before this run finished."]), cutoff))
+        return ids
 
     def purge_guest_data(self, older_than_hours: int = 24) -> int:
         """Guest (not signed-in) demo runs are temporary: remove those older than the cutoff."""

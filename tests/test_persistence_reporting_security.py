@@ -56,7 +56,7 @@ def test_history_survives_restart(settings, tmp_path, demo_request):
 
 def test_stale_runs_documents_cache_and_settings(repo, demo_request):
     repo.create_run("run_stale", demo_request)
-    repo.mark_stale_runs()
+    assert repo.reap_stale_runs(stale_after_seconds=-1) == ["run_stale"]  # cutoff in the future: any heartbeat is stale
     assert repo.list_runs()[0].status == "failed"
     doc_id, created = repo.save_document("a.txt", "A", "text", b"data", [("paragraph 1", "data")], [])
     again, created_again = repo.save_document("copy.txt", "A", "text", b"data", [("paragraph 1", "data")], [])

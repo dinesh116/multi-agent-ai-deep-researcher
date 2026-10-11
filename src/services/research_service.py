@@ -15,6 +15,7 @@ from src.orchestration.state import AGENT_ORDER, ResearchState
 from src.search.registry import ProviderSettings, build_providers
 from src.services.llm import LLMClient
 from src.services.observability import research_trace
+from src.services.run_events import EventSink
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,13 @@ def initial_state(request: ResearchRequest, run_id: str) -> ResearchState:
 def run_research(request: ResearchRequest, settings: Settings, repo=None, on_event: Callable[[AgentEvent], None] | None = None,
                  provider_settings: ProviderSettings | None = None, llm: LLMClient | None = None,
                  uploaded_documents: list[dict] | None = None, today: date | None = None,
-                 run_id: str | None = None, providers=None, owner_id: str = "local") -> ResearchState:
-    """Execute one investigation. Persists the run (if `repo` is given) and returns the final state."""
+                 run_id: str | None = None, providers=None, owner_id: str = "local",
+                 worker_id: str | None = None) -> ResearchState:
+    """Execute one investigation. Persists the run (if `repo` is given) and returns the final state.
+
+    With a repository, progress is durable while the run executes: events, a progress snapshot and a heartbeat are
+    written in batches (see `EventSink`), so any session can follow the run with `Repository.get_progress`.
+    """
     if owner_id.startswith("guest:") and request.mode == ResearchMode.LIVE:
         raise PermissionError("Live research requires signing in. Guests can use demo mode.")
     if request.mode == ResearchMode.DEMO and not is_demo_question(request.question):
@@ -49,53 +55,64 @@ def run_research(request: ResearchRequest, settings: Settings, repo=None, on_eve
     if llm is None and request.use_llm and request.mode == ResearchMode.LIVE:
         llm = LLMClient(settings)
     budget = RunBudget(request.budget())
-    events: list[AgentEvent] = []
+    if repo is not None:
+        repo.create_run(run_id, request, owner_id, worker_id=worker_id)
+        repo.log_activity(owner_id, "run_started", run_id, {"question": request.question, "mode": request.mode.value,
+                                                           "depth": request.depth.value})
+        sink = EventSink(repo, run_id, owner_id, worker_id=worker_id, on_event=on_event,
+                         flush_seconds=settings.run_event_flush_seconds,
+                         heartbeat_seconds=settings.run_heartbeat_seconds).start()
+    else:
+        sink = None
+    events: list[AgentEvent] = sink.events if sink else []
 
     def emit(event: AgentEvent) -> None:
+        if sink:
+            sink.emit(event)
+            return
         events.append(event)
         if on_event:
             on_event(event)
 
-    ctx = RunContext(settings=settings, budget=budget, providers=providers, llm=llm,
-                     use_llm=request.use_llm and request.mode == ResearchMode.LIVE, cache=repo, emit=emit,
-                     today=today or date.today(), provider_settings=provider_settings)
-    state = initial_state(request, run_id)
-    state["provider_notes"] = providers.notes
-    for note in providers.notes:
-        ctx.event("orchestrator", "info", note)
-    if request.mode == ResearchMode.LIVE and not providers.providers:
-        ctx.event("orchestrator", "info", "No search provider is available, so no live research can run. "
-                                          "The report will state that no evidence was gathered.")
-    if ctx.use_llm and not ctx.llm_enabled:
-        ctx.event("orchestrator", "info", "OPENROUTER_API_KEY is not configured: agents use deterministic logic only.")
-    if repo is not None:
-        repo.create_run(run_id, request, owner_id)
-        repo.log_activity(owner_id, "run_started", run_id, {"question": request.question, "mode": request.mode.value,
-                                                           "depth": request.depth.value})
-
-    graph = build_graph(ctx)
-    final: ResearchState = dict(state)
     try:
-        for update in graph.stream(state, stream_mode="updates", config={"recursion_limit": 100,
-                "run_name": "research-investigation", "tags": ["deep-researcher", request.mode.value],
-                "metadata": {"research_run_id": run_id, "mode": request.mode.value, "depth": request.depth.value}}):
-            for node_output in update.values():
-                for key, value in (node_output or {}).items():
-                    if key in ("events", "search_log", "warnings", "errors"):
-                        final[key] = final.get(key, []) + list(value)
-                    else:
-                        final[key] = value
-        status = "completed" if final.get("report") else "failed"
-    except Exception as exc:  # the graph itself failed: keep whatever evidence exists
-        logger.exception("Research run failed")
-        final["errors"] = final.get("errors", []) + [f"Workflow error: {type(exc).__name__}: {str(exc)[:200]}"]
-        status = "failed"
-    final["usage"] = budget.snapshot(final.get("iteration", 0))
-    ctx.event("orchestrator", "completed" if status == "completed" else "failed",
-              f"Research {status} in {final['usage'].elapsed_seconds}s.")
-    final["events"] = events
+        ctx = RunContext(settings=settings, budget=budget, providers=providers, llm=llm,
+                         use_llm=request.use_llm and request.mode == ResearchMode.LIVE, cache=repo, emit=emit,
+                         today=today or date.today(), provider_settings=provider_settings)
+        state = initial_state(request, run_id)
+        state["provider_notes"] = providers.notes
+        for note in providers.notes:
+            ctx.event("orchestrator", "info", note)
+        if request.mode == ResearchMode.LIVE and not providers.providers:
+            ctx.event("orchestrator", "info", "No search provider is available, so no live research can run. "
+                                              "The report will state that no evidence was gathered.")
+        if ctx.use_llm and not ctx.llm_enabled:
+            ctx.event("orchestrator", "info", "OPENROUTER_API_KEY is not configured: agents use deterministic logic only.")
+        graph = build_graph(ctx)
+        final: ResearchState = dict(state)
+        try:
+            for update in graph.stream(state, stream_mode="updates", config={"recursion_limit": 100,
+                    "run_name": "research-investigation", "tags": ["deep-researcher", request.mode.value],
+                    "metadata": {"research_run_id": run_id, "mode": request.mode.value, "depth": request.depth.value}}):
+                for node_output in update.values():
+                    for key, value in (node_output or {}).items():
+                        if key in ("events", "search_log", "warnings", "errors"):
+                            final[key] = final.get(key, []) + list(value)
+                        else:
+                            final[key] = value
+            status = "completed" if final.get("report") else "failed"
+        except Exception as exc:  # the graph itself failed: keep whatever evidence exists
+            logger.exception("Research run failed")
+            final["errors"] = final.get("errors", []) + [f"Workflow error: {type(exc).__name__}: {str(exc)[:200]}"]
+            status = "failed"
+        final["usage"] = budget.snapshot(final.get("iteration", 0))
+        ctx.event("orchestrator", "completed" if status == "completed" else "failed",
+                  f"Research {status} in {final['usage'].elapsed_seconds}s.")
+        final["events"] = events
+    finally:
+        if sink is not None:  # always stop the heartbeat, so a crashed run is reaped instead of looking alive
+            sink.close()  # also writes the remaining events before the final save
     if repo is not None:
-        repo.save_run_results(run_id, final, status, owner_id)
+        repo.save_run_results(run_id, final, status, owner_id, events_persisted=bool(sink and sink.fully_persisted))
         repo.log_activity(owner_id, "run_completed" if status == "completed" else "run_failed", run_id,
                           {"sources": len(final.get("sources", [])), "seconds": final["usage"].elapsed_seconds})
     return final

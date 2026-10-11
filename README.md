@@ -187,7 +187,7 @@ Q&A citation validation, and prompt-injection handling.
 - **"Web search unavailable"**: set `TAVILY_API_KEY` in `.env` and restart, or rely on academic sources.
 - **Live runs return few sources**: widen the date range, enable more providers, or choose *Deep*.
 - **LLM output rejected** (in the progress log): the app fell back to deterministic logic. Try a stronger model on the Settings page.
-- **A run is stuck as "running"** after closing the app: it is marked failed on next start.
+- **A run is stuck as "running"** after the app stopped: running investigations send a heartbeat every `RUN_HEARTBEAT_SECONDS`; one without a heartbeat for `RUN_STALE_AFTER_SECONDS` is marked failed when the app next starts. Runs that are still alive on another instance are left alone.
 - **Start fresh**: delete `data/research.db`.
 
 ## Recommended next steps

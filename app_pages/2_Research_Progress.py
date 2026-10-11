@@ -11,6 +11,7 @@ from src.models.evidence import AgentEvent
 from src.models.research import ResearchRequest, new_id
 from src.orchestration.state import AGENT_ORDER
 from src.services.research_service import run_research
+from src.services.run_events import ProgressTracker
 from src.ui.components import AGENT_INFO, AGENT_TITLES, DEPTH_LABELS, card, demo_banner, eyebrow, html
 from src.ui.state import (current_user, effective_settings, get_repo, load_selected_run, new_research, open_run,
                          provider_settings, select_run)
@@ -70,19 +71,6 @@ def activity_card(events: list[AgentEvent], running: bool) -> str:
             f'<span style="color:#55b592">●</span></div>{body}</div>')
 
 
-def track(event: AgentEvent, statuses: dict[str, str], messages: dict[str, str]) -> None:
-    if event.agent not in AGENT_ORDER:
-        return
-    if event.status == "started":
-        statuses[event.agent] = "running"
-    elif event.status in ("completed", "decision"):
-        statuses[event.agent] = "completed"
-    elif event.status == "failed":
-        statuses[event.agent] = "failed"
-    if event.status != "started":
-        messages[event.agent] = event.message
-
-
 pending = st.session_state.pop("pending_request", None)
 if pending:
     request = ResearchRequest.model_validate_json(pending)
@@ -108,10 +96,9 @@ if pending:
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
 
-    statuses: dict[str, str] = {}
-    messages: dict[str, str] = {}
+    tracker = ProgressTracker()
+    statuses, messages = tracker.statuses, tracker.messages
     log: list[AgentEvent] = []
-    sources = 0
     first = True
     while thread.is_alive() or not events.empty() or first:
         updated = first
@@ -119,13 +106,11 @@ if pending:
         while not events.empty():
             event = events.get()
             log.append(event)
-            track(event, statuses, messages)
-            sources = max(sources, event.metrics.get("total_sources", 0))
+            tracker.apply(event)
             updated = True
         if updated:
-            done = sum(statuses.get(a) == "completed" for a in AGENT_ORDER)
-            running = next((AGENT_TITLES[a] for a in AGENT_ORDER if statuses.get(a) == "running"), None)
-            question_slot.markdown(question_card(request.question, meta + [f"{sources} sources found"], done,
+            running = AGENT_TITLES[tracker.current] if tracker.current else None
+            question_slot.markdown(question_card(request.question, meta + [f"{tracker.sources} sources found"], tracker.done,
                                                  f"{running} working" if running else "Starting the research team"),
                                    unsafe_allow_html=True)
             agents_slot.markdown(agents_card(statuses, messages), unsafe_allow_html=True)

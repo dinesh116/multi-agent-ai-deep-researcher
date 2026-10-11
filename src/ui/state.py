@@ -47,7 +47,7 @@ def get_repo() -> Repository:
     require_auth_configuration()
     settings = get_settings()
     repo = Repository(settings.db_path, settings.turso_database_url, settings.turso_auth_token)
-    repo.mark_stale_runs()
+    repo.reap_stale_runs(settings.run_stale_after_seconds)  # only runs whose worker stopped heartbeating
     repo.purge_guest_data()
     return repo
 
