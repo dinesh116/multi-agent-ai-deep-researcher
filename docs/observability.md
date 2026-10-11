@@ -1,118 +1,137 @@
-# LangSmith tracing guide
+# Observability with LangSmith
 
-## Configuration
+Deep Researcher AI can send traces of each investigation to [LangSmith](https://smith.langchain.com): one trace per
+run, with a span for every agent, model call, provider search and HTTP operation. Tracing is optional and off by
+default. It observes the app; it does not replace OpenRouter, the search providers or the app's own budget
+tracking.
 
-LangSmith observes the research workflow and instrumented requests; it does not replace OpenRouter, search providers or the application's budget enforcement.
+## Contents
 
-| LANGSMITH_TRACING | APP_API_TRACING | Behavior |
+1. [Switches](#switches)
+2. [Set up locally](#set-up-locally)
+3. [Set up a deployment](#set-up-a-deployment)
+4. [Read a research trace](#read-a-research-trace)
+5. [Token counts and cost](#token-counts-and-cost)
+6. [Privacy](#privacy)
+7. [Failure behaviour](#failure-behaviour)
+8. [Troubleshooting](#troubleshooting)
+9. [Verification status](#verification-status)
+
+## Switches
+
+| `LANGSMITH_TRACING` | `APP_API_TRACING` | Result |
 |---|---|---|
-| false | either | Research tracing disabled |
-| true | false | Automatic graph/agent tracing; application request spans disabled |
-| true | true | Graph/agent tracing and detailed request spans |
+| `false` or unset | any | No research tracing |
+| `true` | `false` | Graph and agent spans only |
+| `true` | `true` (default) | Graph and agent spans plus detailed request spans |
 
-The master switch defaults to false when absent. `APP_API_TRACING` defaults to true, but only has an effect when the master switch is enabled. These settings apply to this application's instrumentation, not arbitrary third-party instrumentation. Fully stop and restart Streamlit after configuration changes.
+Restart Streamlit fully after changing either switch.
 
-Local `.env` example (replace the placeholder privately):
+## Set up locally
 
-```dotenv
-LANGSMITH_TRACING=true
-APP_API_TRACING=true
-LANGSMITH_PROJECT=deep-researcher-local
-LANGSMITH_ENDPOINT=https://apac.api.smith.langchain.com
-LANGSMITH_API_KEY=your_langsmith_key
-LANGSMITH_HIDE_INPUTS=true
-LANGSMITH_HIDE_OUTPUTS=true
-# LANGSMITH_WORKSPACE_ID=your_workspace_id
-```
+1. Create an API key in LangSmith (**Settings → API keys**). Copy the full key when it is shown; the portal later
+   shows only a shortened form, which cannot be used.
+2. Add to `.env` (each key once):
 
-Choose the endpoint for the workspace's region, not your physical location. The example is for the APAC portal at `https://apac.smith.langchain.com`. Supply a workspace ID only when needed for key/workspace selection; do not substitute an organization or tracing-project ID.
+   ```dotenv
+   LANGSMITH_TRACING=true
+   APP_API_TRACING=true
+   LANGSMITH_API_KEY=lsv2_...
+   LANGSMITH_PROJECT=deep-researcher-local
+   LANGSMITH_ENDPOINT=https://apac.api.smith.langchain.com
+   LANGSMITH_HIDE_INPUTS=true
+   LANGSMITH_HIDE_OUTPUTS=true
+   # LANGSMITH_WORKSPACE_ID=...   only if your key needs a workspace selected
+   ```
 
-The SDK is declared in the runtime dependencies. Install from the project folder with `uv pip install -r requirements.txt -c constraints.txt` after activating the virtual environment. LangSmith variables are read from the environment directly; they are not all fields of the application's `Settings` dataclass. The existing `.env` loader does not override variables already present in the process environment.
+3. Restart the app and run a **live** investigation with the LLM enabled. Demo runs make no model calls, so their
+   traces contain agents but no model spans.
 
-For deployment, put the variables at the top level of Streamlit Secrets, before `[auth]` or other TOML tables. Use TOML assignments such as `LANGSMITH_TRACING = "true"`. Keep local and deployed project names distinct. Actual credential files must remain private and ignored by Git.
+Pick the endpoint for your **workspace's region**, not your location: `https://api.smith.langchain.com` (US),
+`https://eu.api.smith.langchain.com` (EU) or `https://apac.api.smith.langchain.com` (APAC). A workspace id is a
+workspace id, not an organisation or project id.
 
-## Inspecting a research trace
+Values already present in the process environment take precedence over `.env`.
 
-1. Run an investigation in the research application. Use live mode with LLM enabled to exercise model requests; demo mode normally does not make model requests.
-2. In the LangSmith portal, click **Tracing**, then your configured project, such as `deep-researcher-local`.
-3. Select **Traces** and open the latest **research-investigation** row.
-4. Expand the execution tree to inspect `planner`, `retriever`, `source_evaluator`, `critical_analyst`, `gap_analyst`, `insight_generator`, `data_visualizer` and `report_builder`. Routing nodes and follow-up rounds can also appear. Collapse a busy retriever branch to reach later agents.
-5. Look inside the agent branches for request spans:
+## Set up a deployment
+
+Add the same keys at the top of Streamlit Secrets, above `[auth]`, in TOML form (`LANGSMITH_TRACING = "true"`), and
+use a separate project name such as `deep-researcher-prod` so production traces stay apart from local ones. Keep
+input and output hiding on. See the template in [deployment.md](deployment.md#4-configure-streamlit-cloud).
+
+## Read a research trace
+
+1. In LangSmith, open **Tracing** and select your project.
+2. Under **Traces**, open the latest **research-investigation** row. Its metadata holds the opaque run id, mode and
+   depth.
+3. Expand the tree: `planner`, `retriever`, `source_evaluator`, `critical_analyst`, `gap_analyst`, then
+   `insight_generator` and `data_visualizer` (which run side by side) and `report_builder`. Follow-up rounds add
+   another retrieval branch. Collapse a busy retriever branch to reach later agents.
+4. Inside the agents, request spans show what happened:
 
 | Span | Meaning |
 |---|---|
-| `openrouter.request` | One attempted model request; retries produce separate spans |
-| `search.provider` | A provider search, including cache and budget outcomes |
-| `http.get_json`, `http.post_json`, `http.get_text` | A logical provider HTTP operation |
-| `http.request_attempt` | An individual HTTP attempt inside the retry loop |
-| `http.safe_fetch`, `http.fetch_attempt` | A page fetch and its individual redirect hops |
+| `openrouter.request` | One attempted model request; each retry is a separate span |
+| `search.provider` | One provider search, including cache hits and budget outcomes |
+| `http.get_json`, `http.post_json`, `http.get_text` | One logical provider HTTP operation |
+| `http.request_attempt` | One attempt inside the HTTP retry loop |
+| `http.safe_fetch`, `http.fetch_attempt` | A page fetch and each of its redirect hops |
 
-Model spans may be displayed using the model identifier. The **Runs** tab lists individual spans; its count includes agents, routing and HTTP operations, not just investigations or model calls. Parent and child durations overlap, particularly for parallel jobs, so do not add all displayed durations together.
+The **Runs** tab lists every span (agents, routing and HTTP operations), so its count is much higher than the number
+of investigations. Parent and child durations overlap, especially for parallel work, so do not add them up.
 
-## Finding token counts
+## Token counts and cost
 
-Select a model span and open **Attributes**. Inspect:
+Select an `openrouter.request` span and open **Attributes → metadata → request_metrics → usage_metadata** for
+`input_tokens`, `output_tokens` and `total_tokens`. A badge such as `1.445K` means about 1,445 tokens for that call.
+If the provider did not report usage, the fields are missing; that does not mean zero.
 
-```text
-metadata
-  request_metrics
-    usage_metadata
-      input_tokens
-      output_tokens
-      total_tokens
-```
+For per-investigation totals, use the app: open the run, then **Agents in action**. Its budget panel separates:
 
-The exact visual nesting of metadata may vary with the portal layout. A visible token badge such as `1.445K` is approximately 1,445 tokens for that model call. If usage was not returned by the provider, these fields may be absent or null; absence does not mean zero usage. Default output hiding can leave the Input and Output tabs empty while safe metrics remain in metadata. Automatic aggregate token/cost dashboards are not guaranteed for custom spans; do not sum both a parent aggregate and its child model calls.
+- **Observed tokens:** usage the provider reported.
+- **Unreported allowance:** a conservative charge for requests whose usage is unknown.
+- **In-flight tokens:** reservations for requests still running.
 
-For the application's per-investigation totals, open the research app at `http://localhost:8501`, select the investigation from **Research library** if necessary, then navigate to **Agents in action** in the app sidebar. This is an application page, not a LangSmith portal link. Its budget display distinguishes:
+USD estimates need `LLM_INPUT_USD_PER_MILLION` and `LLM_OUTPUT_USD_PER_MILLION` for the active model. They are
+estimates, not invoices.
 
-- **Observed tokens:** usage actually reported by the provider.
-- **Unreported allowance:** a conservative charge for requests whose usage is unknown; it is not a measured token count.
-- **In-flight tokens:** reservations for ongoing requests.
+## Privacy
 
-USD estimates require the configured model's input/output prices. They are estimates, not billing invoices. LangSmith does not replace the application's budget tracker.
+- Custom spans never contain prompts, responses, search queries, URLs, headers, uploaded content or credentials.
+  They contain operation names, safe outcomes and counts, attempt numbers, model ids, reported token usage and the
+  opaque run id.
+- Graph inputs and outputs are hidden by default (`LANGSMITH_HIDE_INPUTS` and `LANGSMITH_HIDE_OUTPUTS` default to
+  `true`), but an explicit setting can turn hiding off.
+- Hiding does not redact metadata or exception messages already present in graph errors. Review those paths before
+  tracing sensitive workloads.
+- Traces are stored by LangSmith in the region you selected.
 
-## Privacy and failure behavior
+## Failure behaviour
 
-Custom spans omit function arguments, prompts, response bodies, search queries, URLs, headers, uploaded content and credentials. They include operation names, safe outcomes/counts, attempt numbers, model identifiers and reported token usage. Research graph metadata includes the opaque research run ID, mode and depth.
-
-Keep input/output hiding enabled for private workloads. It defaults to true in configuration, but an explicit environment setting can override that default. These flags do not redact metadata or existing graph error strings. Exception details in pre-existing graph errors still need review before tracing sensitive workloads. Failed custom requests record the exception class; safe success metrics are not guaranteed on failure paths.
-
-The observability module isolates tracing setup and cleanup errors from research execution. SDK background export failures can still produce warnings, and tracing has some overhead. The behavior when telemetry is unavailable has not yet been verified end to end.
+Tracing set-up and clean-up errors are isolated from research, so an unreachable LangSmith should not stop a run.
+The SDK may still log export warnings, and tracing adds a small overhead. Trace context is copied explicitly into
+each worker thread so background runs and parallel calls nest under the right investigation.
 
 ## Troubleshooting
 
-### Waiting for traces or an empty project list
+| Problem | Check |
+|---|---|
+| No traces appear | Restart the app, run a fresh live investigation, check the project name and the portal's time filter, and look for export errors in the terminal. |
+| HTTP 403 Forbidden | Regional endpoint, the full key (not the shortened portal form), workspace access, and conflicting values between the environment and Secrets. If the full key was not saved, create a new one and revoke the old one after testing. |
+| Model spans missing | The run was in demo mode, or the LLM toggle was off. |
+| Request spans missing | `APP_API_TRACING` is `false`. |
 
-Run a fresh investigation after restarting the app. Check the project name and time filter. A portal waiting indicator does not prove successful delivery. Inspect the terminal for export errors.
+Never print or share API keys while diagnosing.
 
-### HTTP 403 Forbidden
+## Verification status
 
-Check the region endpoint, the full API key, access to the intended workspace, and any conflicting process environment/Streamlit Secrets settings. A shortened key shown in the portal table cannot be used. The full key is shown only on creation; create a replacement if it was not saved, then revoke the old one after validating the replacement. Key prefix alone is not proof of validity or invalidity. If workspace selection is required, use the workspace ID, not an organization/project ID. Do not print or share keys while diagnosing errors.
+Confirmed locally (11 October 2026, APAC workspace): `research-investigation` traces with agent branches,
+`openrouter.request` spans with token usage, provider searches and HTTP operations.
 
-During this session, tracing succeeded after the user replaced the key and restarted. That sequence does not conclusively establish the earlier 403's root cause.
+Not yet verified, and not covered by automated tests:
 
-### App fails to import copy_context
-
-`copy_context` must be imported from Python's `contextvars` module. An initial implementation imported it from `contextlib`; that mistake was corrected. Static lint/syntax checks did not detect the runtime import error.
-
-## Verification record — 11 October 2026
-
-Confirmed by user-provided screenshots from the local app and APAC portal:
-
-- A successful initial graph trace reached `deep-researcher-local`.
-- An updated `research-investigation` trace appeared, with visible planner/retriever branches and model usage.
-- Additional screenshots showed `openrouter.request`, provider searches, HTTP operations, and later agent spans.
-- Visible request spans were attached within the research trace; this is not an exhaustive verification of every parallel request.
-
-Still pending:
-
-- Reconcile per-call and whole-run token totals with provider usage/billing.
-- Verify retries and exhausted budgets under controlled failures.
-- Verify no research traces are exported with the master switch off.
-- Verify graph-only behavior with detailed API tracing off.
-- Verify research completion when LangSmith is unavailable.
-- Run automated regressions for the observability changes; earlier 153-test results predate this integration.
-- Verify the public deployment's authenticated workflow and tracing.
-
-No additional live requests or tests were executed for this documentation update.
+- token totals reconciled with provider billing;
+- retries and exhausted budgets under controlled failures;
+- no export when `LANGSMITH_TRACING=false`, and graph-only output when `APP_API_TRACING=false`;
+- research completing when LangSmith is unreachable;
+- tracing from the public deployment.

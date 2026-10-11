@@ -1,70 +1,127 @@
-# Security configuration and review
+# Security model
 
-## Authentication
+How Deep Researcher AI protects accounts, user data, secrets and its LLM pipeline, and the risks that remain.
+Operational steps (Secrets, providers, diagnostics) are in [deployment.md](deployment.md).
 
-`APP_ENV` defaults to `production`. Configure `[auth]` (redirect URI, cookie secret) and at least one complete
-provider section (`[auth.google]`, `[auth.microsoft]`, `[auth.email]`) in Streamlit Secrets. Missing, unreadable,
-incomplete or placeholder authentication settings stop the UI before it opens shared research storage. Logged-in
-sessions must have a provider subject ID and an issuer that matches a configured provider (otherwise the session is
-rejected). Account ids are namespaced by provider (Google keeps its raw subject), so two issuers can never share an
-account. `ADMIN_EMAILS` grants admin rights only when the provider marks the email as verified, because email
-sign-up would otherwise let anyone register an administrator's address. Passwords for email accounts are handled by
-the hosted provider; the app never receives them.
+## Contents
 
-For private development only, set `APP_ENV=local` in your local `.env`. This explicitly enables the shared
-local administrator when sign-in is unavailable. Never deploy that `.env` or use local mode on a public server.
-Use `.streamlit/secrets.toml.example` for deployment configuration; keep real secrets untracked.
+1. [Assets and threats](#1-assets-and-threats)
+2. [Identity and authentication](#2-identity-and-authentication)
+3. [Authorisation and data isolation](#3-authorisation-and-data-isolation)
+4. [LLM and prompt-injection controls](#4-llm-and-prompt-injection-controls)
+5. [Network and content handling](#5-network-and-content-handling)
+6. [Secrets management](#6-secrets-management)
+7. [Telemetry and logging](#7-telemetry-and-logging)
+8. [Verification](#8-verification)
+9. [Residual risks](#9-residual-risks)
 
-## Evidence handling
+## 1. Assets and threats
 
-Planning input, extracted passages, contradiction quotes, insight/Q&A matrices and report drafts are wrapped
-as untrusted data before LLM processing. Source IDs are HTML-escaped, and injected boundary tags are removed
-case-insensitively. Structured outputs remain schema-validated. Contradiction verdicts use a fixed enum;
-insights containing unknown claim IDs are rejected; report rewrites that remove or change citation markers
-fall back to the deterministic report. These measures do not prove factual correctness or eliminate prompt injection.
+| Asset | Threats considered |
+|---|---|
+| User research data (runs, uploads, Q&A, profile) | Access by another user; id guessing; data surviving deletion |
+| Accounts and admin rights | Unauthenticated access to a public deployment; identity confusion across providers; claiming an admin's email |
+| API keys and tokens | Commits to Git; exposure in logs, traces or the UI |
+| The research pipeline | Prompt injection in retrieved pages or uploads; the LLM inventing citations or numbers |
+| The host and its network | SSRF through fetched URLs; oversized or hostile uploads; resource exhaustion |
 
-Regression tests cover missing/partial/unreadable auth, missing identity, production guest behavior, boundary
-escape attempts, invalid verdicts, untrusted evidence in downstream prompts and citation-marker tampering.
-They use fake models and offline data, not live-model attack evaluations.
+## 2. Identity and authentication
 
-## Credential checks
+- **Fail closed.** `APP_ENV` defaults to `production`. If `[auth]` (redirect URI, cookie secret) or every provider
+  section is missing, unreadable or contains a placeholder, the UI stops *before* opening the shared database.
+  `APP_ENV=local` is the only way to run without sign-in, and it creates a single local administrator: never use it
+  on a public server.
+- **Standards-based sign-in.** Google, Microsoft and hosted email providers use OpenID Connect through Streamlit's
+  `st.login` (Authlib). Passwords for email accounts are entered only on the provider's pages.
+- **Issuer binding.** A session's issuer must match the host of a configured provider's discovery URL; any other
+  issuer is rejected. Sessions without a subject are rejected.
+- **Namespaced identities.** Account ids are the provider subject, prefixed by provider (`microsoft:…`, `email:…`;
+  Google subjects stay unprefixed for compatibility), so the same subject from two issuers can never share an
+  account.
+- **Admin rights** require the address to be in `ADMIN_EMAILS` **and** marked verified by the provider; otherwise
+  open email sign-up would let anyone register an administrator's address.
 
-Run `python scripts/scan_secrets.py` from this repository. It scans tracked and non-ignored new working files,
-plus all commits reachable from local Git references, checking known provider-key formats, private keys,
-credential URLs and common credential assignments. Only candidate type, path, line and commit are printed;
-matched values are withheld. A candidate causes a nonzero exit for integration into future CI.
+## 3. Authorisation and data isolation
 
-The initial scan on 11 October 2026 found no candidates in 77 tracked working paths and 145 unique blobs
-across eight reachable commits. Ignored private secret files were not opened by the scan. This is a pattern
-scan, not proof that no secrets exist: unknown formats, inaccessible remote references, deleted references,
-Git LFS payloads and external logs are outside its coverage. Nothing was sent to a credential-validation service.
+| Capability | Guest | Signed-in user | Admin |
+|---|---|---|---|
+| Demo research (three preselected questions) | ✅ | ✅ | ✅ |
+| Live research, uploads, LLM answers | — | ✅ | ✅ |
+| Own history, profile, defaults | Session only | ✅ | ✅ |
+| App-wide models, providers, cache | — | — | ✅ |
+| Other users' content | — | — | — (usage counts only) |
 
-If a genuine exposed credential is found, revoke/rotate it at its provider and update deployment secrets.
-Removing it from the current source alone does not invalidate a credential or remove historical exposure.
-No credentials were rotated during this change because no exposure candidate was found.
+- **Enforced on the server.** The research service rejects live research for guests and any non-preselected demo
+  question before a run is queued; hiding UI controls is not the only barrier.
+- **Owner scoping in the repository.** Every method touching user data takes an owner id and filters by it. Reading
+  another user's run returns nothing (not "forbidden"), so ids cannot be probed. Writes check ownership too.
+- **Guests** receive a random per-session id; their data is purged after 24 hours.
+- **Deletion.** "Delete my data" stops active runs, then removes runs and all per-run tables, documents, activity,
+  preferences, profile and the account record. A run deleted mid-execution is not re-created by its final save.
+- **Shared data** is limited to the search-result cache (24-hour lifetime) and admin settings.
 
-## Scope
+## 4. LLM and prompt-injection controls
 
-This change does not add per-user quotas or global concurrency limits. Live OAuth, deployed application
-behavior and live-model injection resistance still require deployment verification.
+- Retrieved pages, uploads, evidence matrices and report drafts are wrapped in `<untrusted_source>` boundaries. The
+  system policy forbids following instructions inside them; injected boundary tags are stripped
+  (case-insensitively) and source ids are HTML-escaped.
+- Instruction-like text in a source is detected, excluded from claims, and the source is flagged and down-weighted.
+- Structured outputs are schema-validated. Contradiction verdicts use a fixed set of values; insights referring to
+  unknown claim ids are rejected; claims must quote a passage verbatim and may not add numbers or flip negation.
+- Report rewrites must keep the deterministic report's citation markers and may not introduce new numbers;
+  otherwise the deterministic report is used.
+- Agents have no general tools: they can call only the configured search APIs and fetch pages from search results.
 
-## Configurable LangSmith observability
+These controls reduce injection risk and keep outputs traceable; they do not prove factual accuracy or guarantee
+complete prevention.
 
-Tracing exports telemetry to the configured LangSmith region. Custom request spans omit arguments and content bodies, but retain model identifiers, attempt numbers, safe request metrics and opaque research IDs. Graph input/output hiding defaults to true; explicit environment settings can override it. Hiding payloads does not sanitize metadata or pre-existing graph error strings. Inspect error and metadata paths before tracing private workloads.
+## 5. Network and content handling
 
-Keep real LangSmith keys in ignored local configuration or deployed Secrets. Never use a shortened portal key, print credentials during diagnostics or commit them. `LANGSMITH_TRACING=false` is the research tracing master switch; its runtime off behavior still needs verification. No per-user quotas or global concurrency limits were introduced.
+- **SSRF protection.** `safe_fetch` allows only public `http(s)` addresses, blocking private, loopback,
+  link-local and cloud-metadata ranges. Redirects are followed manually and every hop is re-checked; size and
+  content type are capped.
+- **Uploads** are limited to PDF, text, Markdown and CSV, 15 MB, 300 PDF pages, 400,000 characters and 2,000 CSV
+  rows.
+- **Rendering.** HTML export escapes source markup. User-controlled text placed into page HTML (display names,
+  questions, titles) is escaped.
+- **Resource limits.** Per-run budgets (rounds, searches, sources, time, LLM calls, tokens) and per-user and
+  per-process run limits bound the work any one user can cause.
 
-See [observability.md](observability.md) for the complete privacy scope, troubleshooting and evidence-based verification record.
+## 6. Secrets management
 
-## Authentication console diagnostics
+- Secrets come from `.env` locally or Streamlit Secrets when deployed. `.env`, `.streamlit/secrets.toml` and the
+  databases are git-ignored; only `*.example` templates are committed.
+- The UI shows only masked status ("configured (…abcd)"), and the settings table refuses keys that look like
+  secrets.
+- `scripts/scan_secrets.py` scans tracked and new files plus all reachable Git history for known key formats,
+  private keys, credential URLs and credential assignments. It prints the candidate type, path, line and commit,
+  never the value, and exits non-zero on a finding. CI runs it on every push and pull request.
+- If a real credential is exposed: revoke or rotate it at the provider, then update Secrets. Deleting it from the
+  code does not invalidate it or remove it from history.
 
-Temporarily set top-level `AUTH_DIAGNOSTICS = "true"` in deployed Streamlit Secrets (before `[auth]`), then reboot. Locally use `AUTH_DIAGNOSTICS=true` in `.env`. Inspect the deployment's server logs, not the browser console. Restore false after diagnosis.
+## 7. Telemetry and logging
 
-- `AUTH_CONFIG`: required authentication field names with true/false status; secret-loading exception class; callback HTTPS, path and local-host checks. Logged once per session/configuration status change. True means a nonempty string passed the existing placeholder check, not that Google accepted the credential.
-- `AUTH_BLOCKED`: production stopped because authentication configuration was missing, incomplete or unreadable. This occurs before Google login; changing Google's allowed URLs alone cannot fix missing deployed Secrets.
-- `AUTH_LOGIN_START`: the app attempted to start sign-in (the provider name is logged).
-- `AUTH_LOGIN_FAILED`: synchronous login-start failure, with exception class only.
-- `AUTH_SESSION_ACCEPTED`: a signed-in session with a provider subject reached the app; no identity values are logged.
-- `AUTH_SESSION_INVALID`: the returned session has no usable provider subject.
+- **LangSmith tracing** is off unless `LANGSMITH_TRACING=true`. Graph inputs and outputs are hidden by default
+  (`LANGSMITH_HIDE_INPUTS`, `LANGSMITH_HIDE_OUTPUTS`); custom spans carry operation names, attempt numbers, model
+  ids, safe counts and opaque run ids, never prompts, responses, queries, URLs, headers, uploads or credentials.
+  Hiding does not redact metadata or exception text already present in graph errors, so review those before
+  tracing private workloads. See [observability.md](observability.md#privacy).
+- **Sign-in diagnostics** (`AUTH_DIAGNOSTICS=true`) log field names and true/false results only. Turn them off
+  after use.
 
-Both localhost and production redirect URIs may be registered in Google Cloud. The deployed `[auth].redirect_uri` must select the exact production HTTPS callback ending in `/oauth2callback`; local configuration selects localhost. Diagnostics do not remotely inspect Google's registered redirect URIs, test credentials, or intercept callback errors handled internally by Streamlit/Authlib. Do not enable HTTP wire logging or share complete secret files to diagnose those errors.
+## 8. Verification
+
+The offline suite covers: missing, partial, unreadable and placeholder sign-in settings; missing identities and
+unknown issuers; provider namespacing; verified-email admin rules; guest restrictions; owner isolation on SQLite and
+libSQL; deletion; boundary-escape attempts; invalid verdicts; untrusted evidence in downstream prompts; citation
+tampering; SSRF blocking; and escaping of a hostile display name. Tests use fake models and offline data; they are
+not live-model attack evaluations.
+
+## 9. Residual risks
+
+- Prompt boundaries lower but do not eliminate injection risk with live models.
+- Admission limits are best effort across instances; there are no per-user token or cost quotas.
+- Live OAuth flows, the deployed application and live-model injection resistance still need hosted verification
+  ([deployment.md](deployment.md#6-verify-the-deployment)).
+- The secret scanner matches known patterns; unknown formats, deleted refs, LFS payloads and external logs are out
+  of scope.

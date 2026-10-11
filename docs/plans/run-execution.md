@@ -1,15 +1,17 @@
 # Plan: durable run execution and checkpointed workflow
 
-Status: Phases 0–3 implemented on `feature/run-jobs`; Phases 4–5 pending.
+**Status:** Phases 0–3 implemented and merged into `feature/synthora-ui` (PR #3); Phases 4–5 pending.
+The implemented design is summarised in [architecture.md](../architecture.md#8-run-execution); this document records the
+problem, decisions and roadmap.
 
-## Problem
+## Problem (before this work)
 
-Research runs execute in a thread started by the "Agents in action" page, which blocks in a polling loop while
-the thread works. Progress lives only in that page's memory, and results are written once at the end. Consequences:
-a user who navigates away or reconnects cannot reattach; there is no cancellation and no limit on concurrent runs;
-and `mark_stale_runs()` failed *every* running row whenever any app process started, which kills live runs on other
-instances sharing a Turso database. The LangGraph workflow has no checkpointer, so a run cannot resume after a
-process restart and cannot pause for human input.
+Research ran in a thread started by the "Agents in action" page, which blocked in a polling loop while the thread
+worked. Progress lived only in that page's memory, and results were written once at the end. As a result, a user who
+navigated away or reconnected could not reattach; there was no cancellation and no limit on concurrent runs; and
+`mark_stale_runs()` failed *every* running row whenever any app process started, killing live runs on other
+instances sharing a Turso database. The LangGraph workflow still has no checkpointer, so a run cannot yet resume
+after a process restart or pause for human input (Phases 4–5).
 
 ## Decision: in-process job runner behind an interface
 
@@ -18,15 +20,16 @@ in one bounded, process-wide executor (`RunManager`), and **all progress is pers
 and read progress from the database. The `RunManager` interface allows an external worker later without changing
 pages or agents.
 
-Run lifecycle:
+Target run lifecycle (states in [brackets] are planned for Phases 4–5):
 
 ```
-queued → running ⇄ awaiting_input → completed
-            ↓              ↓
-       cancelling →   cancelled          interrupted (process died) → [Resume] → running
-            ↓
-          failed
+queued → running ⇄ [awaiting_input] → completed
+   ↓        ↓
+cancelled  cancelled (partial report) · failed · [interrupted] (process died) → [Resume] → running
 ```
+
+Implemented today: `queued`, `running`, `completed`, `cancelled` and `failed`. A run whose process dies is reaped as
+`failed` until Phase 4 adds `interrupted` and Resume.
 
 ## Phases
 
@@ -52,7 +55,8 @@ queued → running ⇄ awaiting_input → completed
 ## Phase 1 design (implemented)
 
 - `runs` gains `worker_id`, `heartbeat_at`, `cancel_requested` and `progress` (JSON) columns via additive migration,
-  plus an index on `(status, heartbeat_at)`.
+  plus an index on `(status, heartbeat_at)`. Heartbeats and the stale cutoff use UTC (`utc_now`), so hosts in
+  different timezones sharing one database agree on staleness (fixed after review; covered by a test).
 - `src/services/run_events.py`: `ProgressTracker` derives per-agent status from events (shared by the worker and
   the page); `EventSink` assigns sequence numbers, buffers events and writes them in batches (every
   `RUN_EVENT_FLUSH_SECONDS` or 20 events) together with progress and a heartbeat. A background heartbeat keeps
@@ -82,8 +86,9 @@ queued → running ⇄ awaiting_input → completed
   "In progress" runs; the library and recent cards offer "Follow"; results redirect while a run is active.
 - Also fixed: the planner never emitted a `completed` event, so live views showed it working for the whole run.
 
-## Risks
+## Risks and mitigations
 
-- Turso write volume: batched event writes; checkpoints deleted after completion (Phase 4).
-- Process restarts: heartbeat reaping now; `interrupted` + Resume in Phase 4.
-- A resumed node restarts from its beginning; the 24 h search cache and restored budget bound the cost.
+- **Turso write volume:** event writes are batched; checkpoints will be deleted after completion (Phase 4).
+- **Process restarts:** heartbeat reaping today; `interrupted` plus Resume in Phase 4.
+- **Repeated work on resume:** a resumed node restarts from its beginning; the 24-hour search cache and restored
+  budget bound the cost.
