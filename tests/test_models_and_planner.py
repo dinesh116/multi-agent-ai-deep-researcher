@@ -96,3 +96,33 @@ def test_invalid_llm_plan_falls_back_to_heuristic(settings):
     update = PlannerAgent().run({"request": ResearchRequest(question=QUESTION), "budget": ResearchBudget()},
                                 _ctx(settings, LLMClient(settings, client=client)))
     assert update["plan"].generated_by == "heuristic"
+
+
+@pytest.mark.parametrize("question", ["hello hello hello", "test test test", "hello there friend"])
+def test_question_rejects_obvious_non_research_input(question):
+    with pytest.raises(ValidationError, match="research topic"):
+        ResearchRequest(question=question)
+
+
+@pytest.mark.parametrize("question", [
+    "How can we ignore irrelevant search results?",
+    "Research ethical hacking in enterprise networks",
+    "AI AI AI adoption impacts enterprises",
+    "Tell me everything about artificial intelligence",
+])
+def test_legitimate_topics_and_broad_questions_remain_allowed(question):
+    assert ResearchRequest(question=question).question == question
+
+
+def test_broad_question_guidance_is_advisory():
+    from src.models.research import question_guidance
+    assert question_guidance("Tell me everything about AI")
+    assert not question_guidance("Compare AI adoption in Indian banks since 2023")
+
+
+def test_backend_revalidates_mutated_question():
+    from src.services.research_service import validate_request
+    request = ResearchRequest(question=QUESTION, mode="live")
+    request.question = "test test test"
+    with pytest.raises(ValidationError, match="research topic"):
+        validate_request(request, "local")

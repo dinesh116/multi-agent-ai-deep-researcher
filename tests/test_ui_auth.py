@@ -246,3 +246,34 @@ def test_damru_name_and_expansion_next_to_logo():
     assert f'content: "{BRAND_NAME}"' in BRAND_CSS and f'content: "{BRAND_EXPANSION}"' in BRAND_CSS  # sidebar logo
     at = app(with_auth=False)
     assert any(BRAND_EXPANSION in h.proto.body for h in at.get("html"))  # the brand CSS is injected on every page
+
+
+@pytest.mark.parametrize("workspace", [False, True])
+def test_meaningless_question_is_rejected_in_both_composers(workspace):
+    at = app(with_auth=False)
+    if workspace:
+        at.switch_page("app_pages/1_Research_Workspace.py").run()
+        if at.segmented_control:
+            at.segmented_control(key="q_mode").set_value("live").run()
+        at.text_area(key="q_text").set_value("test test test").run()
+        at.button(key="start_research").click().run()
+    else:
+        at.text_area(key="home_q").set_value("test test test").run()
+        at.button(key="home_start").click().run()
+    assert not at.exception
+    assert any("research topic" in error.value for error in at.error)
+    from src.ui.state import get_repo
+    assert not get_repo().list_runs("local")
+
+
+@pytest.mark.parametrize("workspace", [False, True])
+def test_broad_question_shows_advice_in_both_composers(workspace):
+    at = app(with_auth=False)
+    if workspace:
+        at.switch_page("app_pages/1_Research_Workspace.py").run()
+        if at.segmented_control:
+            at.segmented_control(key="q_mode").set_value("live").run()
+    at.text_area(key="q_text" if workspace else "home_q").set_value("Tell me everything about AI").run()
+    assert not at.exception and not at.error
+    assert any("may be too broad" in info.value for info in at.info)
+    assert any("forecasts are uncertain" in caption.value for caption in at.caption)

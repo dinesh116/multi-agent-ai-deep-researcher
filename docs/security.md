@@ -130,3 +130,17 @@ not live-model attack evaluations.
   ([deployment.md](deployment.md#6-verify-the-deployment)).
 - The secret scanner matches known patterns; unknown formats, deleted refs, LFS payloads and external logs are out
   of scope.
+
+
+### Research question checks
+
+Both research composers validate requests through `ResearchRequest` before submission. Questions are normalized,
+limited to 12–600 characters and must contain at least three words of three or more English letters. Obvious
+single-word repetition and greeting-only input are rejected. The service revalidates requests before queueing or
+execution, including models modified by programmatic callers. Control characters are removed as before.
+
+Broad phrases such as “tell me everything” receive an advisory scope hint; they are not blocked or rewritten.
+The composers remind users to specify scope and verify evidence, and that forecasts remain uncertain. These
+inexpensive checks make no LLM calls and do not establish factual correctness, detect all meaningless input or
+prevent prompt injection/hallucinations. Existing evidence and output validation remain necessary. Interactive
+clarification and semantic premise validation are not implemented.

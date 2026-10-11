@@ -32,6 +32,7 @@ def initial_state(request: ResearchRequest, run_id: str) -> ResearchState:
 
 def validate_request(request: ResearchRequest, owner_id: str) -> None:
     """Who may run what. Raises before any work (or queue slot) is spent on a request that is not allowed."""
+    ResearchRequest.model_validate(request.model_dump())  # also protects callers that mutate or construct models
     if owner_id.startswith("guest:") and request.mode == ResearchMode.LIVE:
         raise PermissionError("Live research requires signing in. Guests can use demo mode.")
     if request.mode == ResearchMode.DEMO and not is_demo_question(request.question):

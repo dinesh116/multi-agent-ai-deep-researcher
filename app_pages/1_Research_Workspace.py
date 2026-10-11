@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from src.ingestion.extract import ALLOWED_UPLOADS, ExtractionError, extract_upload
 from src.models.research import (DEMO_QUESTIONS, DEPTH_PRESETS, Depth, ResearchMode, ResearchRequest,
                                  SourcePreference)
+from src.models.research import QUESTION_EVIDENCE_NOTICE, question_guidance
 from src.ui.components import DEPTH_LABELS, ago, card, eyebrow, html, mode_tag, status_tag
 from src.models.run import ACTIVE_STATUSES
 from src.services.jobs import RunRejected
@@ -78,6 +79,9 @@ with card("composer"):
     else:
         question = st.text_area("Research question", key="q_text", height=90, max_chars=600,
                                 placeholder="e.g. How might AI reshape early-stage drug discovery over the next decade?")
+        st.caption(QUESTION_EVIDENCE_NOTICE)
+        if guidance := question_guidance(question or ""):
+            st.info(guidance)
         html('<div class="ds-muted" style="margin:2px 0 6px">Need a starting point?</div>')
         for i, (col, example) in enumerate(zip(st.columns(3), DEMO_QUESTIONS)):
             col.button(example, key=f"sugg_{i}", width="stretch",

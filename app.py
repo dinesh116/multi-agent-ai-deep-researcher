@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from src.config import APP_NAME
 from src.models.research import DEMO_QUESTIONS, DEPTH_PRESETS, Depth, ResearchMode, ResearchRequest, SourcePreference
+from src.models.research import QUESTION_EVIDENCE_NOTICE, question_guidance
 from src.models.run import ACTIVE_STATUSES
 from src.services.jobs import RunRejected
 from src.ui.brand import agents_team_html, landing_figure_html, public_hero_html, workflow_graph_html
@@ -100,6 +101,9 @@ def landing() -> None:
     with composer, card("composer-home"):
         st.text_area("What do you want to understand?", key="home_q", height=110, max_chars=600,
                      placeholder="e.g. How might AI reshape early-stage drug discovery over the next decade?")
+        st.caption(QUESTION_EVIDENCE_NOTICE)
+        if guidance := question_guidance(st.session_state.get("home_q", "")):
+            st.info(guidance)
         st.segmented_control(
             "Research depth", [d.value for d in Depth], key="home_depth", default=preference("depth"),
             format_func=lambda d: f"{DEPTH_LABELS[d]} · ~{max(1, DEPTH_PRESETS[Depth(d)]['budget'].max_seconds // 60)} min")

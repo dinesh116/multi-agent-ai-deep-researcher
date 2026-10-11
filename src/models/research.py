@@ -86,6 +86,19 @@ def is_demo_question(question: str) -> bool:
     return any(normalized == q.casefold() for q in DEMO_QUESTIONS)
 
 
+QUESTION_EVIDENCE_NOTICE = (
+    "Include a specific topic, timeframe or geography where useful. Answers depend on available evidence; "
+    "forecasts are uncertain. Verify important conclusions against the original sources."
+)
+
+
+def question_guidance(question: str) -> str | None:
+    """Conservative, advisory scope hints; never rewrite or block a broad topic."""
+    if re.search(r"\b(?:tell me everything|everything about|all about)\b", question, re.IGNORECASE):
+        return "This question may be too broad. Consider a specific comparison, timeframe, geography or outcome."
+    return None
+
+
 class ResearchRequest(BaseModel):
     question: str
     context: str = ""
@@ -112,6 +125,10 @@ class ResearchRequest(BaseModel):
             raise ValueError("Research questions are limited to 600 characters. Put extra detail in the context field.")
         if len(re.findall(r"[A-Za-z]{3,}", value)) < 3:
             raise ValueError("The question needs at least three words to plan an investigation.")
+        words = re.findall(r"[^\W\d_]+", value.casefold())
+        greeting_words = {"hello", "hi", "hey", "there", "friend", "good", "morning", "afternoon", "evening"}
+        if len(set(words)) < 2 or (words and set(words) <= greeting_words):
+            raise ValueError("Please enter a research topic or question, rather than greetings or repeated words.")
         return value
 
     @field_validator("context")
