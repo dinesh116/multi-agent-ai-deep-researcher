@@ -11,6 +11,8 @@ from urllib.parse import quote
 
 HERO_IMAGE = "app/static/hero.jpg"
 LOGO_IMAGE = "app/static/logo.png"
+BRAND_NAME = "DAMRU"  # shown next to the agent logo
+BRAND_EXPANSION = "Deep Agent for Multimodal Research and Understanding"  # its hover text
 HERO_ALT = "The Deep Research Agent robot in a lab coat, surrounded by small helper robots in a research lab"
 
 
@@ -30,6 +32,9 @@ ICONS = {
     "report_builder": '<path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
     "team": '<circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M15 14.5c3 .2 6 2.2 6 5.5"/>',
     "check": '<path d="M20 6 9 17l-5-5"/>',
+    "observability": '<path d="M22 12h-4l-3 8-6-16-3 8H2"/>',
+    "cost": ('<circle cx="12" cy="12" r="9"/><path d="M14.8 9.2c-.6-.9-1.6-1.4-2.8-1.4-1.7 0-3 .9-3 2.1s1.3 1.8 3 2.1 '
+             '3 .9 3 2.1-1.3 2.1-3 2.1c-1.2 0-2.3-.5-2.9-1.4M12 6v1.8M12 16.2V18"/>'),
 }
 
 
@@ -55,27 +60,59 @@ TEAM = [
     ("data_visualizer", "Data Visualizer", "Charts the evidence"),
     ("report_builder", "Report Builder", "Writes the cited report"),
 ]
+# Cross-cutting agents watch every step instead of taking a turn in the pipeline. They present capabilities the app
+# already has: LangSmith tracing, the live event log and token accounting (services/observability.py,
+# services/run_events.py, orchestration/budget.py), and the run budget guard, 24 h search cache and cost estimate.
+CROSS_CUTTING = [
+    ("observability", "Observability & Telemetry", "Traces every step, live",
+     ["LangSmith traces", "Live events", "Token usage"], "traces · events · tokens"),
+    ("cost", "Cost Optimizer", "Keeps spend in check",
+     ["Budget guard", "Search cache", "Cost estimate"], "budget · cache · cost estimate"),
+]
 
 
 def public_hero_html() -> str:
     """The lab-scene image in a glass frame with two floating facts."""
     return (f'<div class="dr-hero"><div class="dr-hero-frame"><img src="{HERO_IMAGE}" alt="{HERO_ALT}"></div>'
-            f'<div class="dr-float a">{_icon("team", 18)}8 specialist agents</div>'
+            f'<div class="dr-float a">{_icon("team", 18)}10 AI agents</div>'
             f'<div class="dr-float b">{_icon("check", 18)}Every claim linked to its source</div></div>')
 
 
 def landing_figure_html() -> str:
     return (f'<figure class="dr-figure"><img src="{HERO_IMAGE}" alt="{HERO_ALT}"><figcaption>'
-            "<b>DR-01 and the team</b><span>8 agents · every claim cited</span></figcaption></figure>")
+            "<b>DR-01 and the team</b><span>10 agents · every claim cited</span></figcaption></figure>")
+
+
+def brand_mark_html() -> str:
+    """The DAMRU name; <abbr> gives the expansion as hover text and to screen readers."""
+    return f'<abbr class="dr-wordmark" title="{escape(BRAND_EXPANSION)}">{escape(BRAND_NAME)}</abbr>'
 
 
 def signin_brand_html(heading: str, subheading: str) -> str:
-    return (f'<div class="dr-signin-brand"><img src="{LOGO_IMAGE}" alt="Deep Research Agent">'
-            f"<h1>{escape(heading)}</h1><p>{escape(subheading)}</p></div>")
+    return (f'<div class="dr-signin-brand"><div class="dr-brand-row"><img src="{LOGO_IMAGE}" alt="Deep Research Agent">'
+            f"{brand_mark_html()}</div><h1>{escape(heading)}</h1><p>{escape(subheading)}</p></div>")
+
+
+def _brand_css() -> str:
+    """DAMRU beside the sidebar logo. st.logo cannot carry text, so the name and a hover tooltip are drawn with CSS
+    on the logo's container (the first child of the sidebar header)."""
+    logo = '[data-testid="stSidebarHeader"] > :first-child'  # a div, or the stLogoLink button when the logo links home
+    return ('[data-testid="stSidebarHeader"] { position: relative; z-index: 1000; }\n'  # tooltip above the menu
+            f'{logo} {{ position: relative; display: flex; align-items: center; gap: 10px; opacity: 1; }}\n'
+            f'{logo}::after {{ content: "{BRAND_NAME}"; font: 700 21px Sora, sans-serif; letter-spacing: .14em; '
+            "color: var(--dr-ink); opacity: 1; }\n"
+            f'{logo}:hover::before {{ content: "{BRAND_EXPANSION}"; position: absolute; left: 0; top: calc(100% + 8px); '
+            "z-index: 1000; width: max-content; max-width: 230px; padding: 8px 11px; border-radius: 10px; "
+            "background: var(--dr-node); border: 1px solid var(--dr-line); box-shadow: 0 10px 30px var(--dr-shadow); "
+            "font: 500 12.5px/1.4 'DM Sans', sans-serif; letter-spacing: 0; color: var(--dr-ink); white-space: normal; }")
+
+
+BRAND_CSS = _brand_css()
 
 
 def agents_team_html() -> str:
-    """Eight tiles; a highlight passes from tile to tile in pipeline order while each icon's ring turns."""
+    """Eight pipeline tiles (a highlight passes from tile to tile in order) and two always-on cross-cutting tiles
+    (an amber light sweeps across them)."""
     tiles = []
     for i, (agent, name, words) in enumerate(TEAM):
         violet = " violet" if i % 2 else ""
@@ -84,9 +121,20 @@ def agents_team_html() -> str:
             f'<div class="dr-tile-top"><span class="dr-badge-icon"><span class="ring" aria-hidden="true" '
             f'style="animation-duration:{7 + (i * 5) % 6}s"></span><span class="core">{_icon(agent, 18)}</span></span>'
             f'<span class="dr-tile-num">{i + 1:02d}</span></div><div><h3>{escape(name)}</h3><p>{escape(words)}</p></div></article>')
+    cross = []
+    for n, (agent, name, words, tags, _outputs) in enumerate(CROSS_CUTTING):
+        chips = "".join(f'<span class="dr-ctag">{escape(tag)}</span>' for tag in tags)
+        cross.append(
+            f'<article class="dr-ctile"><div class="sweep" aria-hidden="true" style="animation-delay:{n * 1.6:.1f}s"></div>'
+            f'<span class="dr-badge-icon"><span class="ring" aria-hidden="true"></span><span class="dr-on" aria-hidden="true">'
+            f'</span><span class="core">{_icon(agent, 19)}</span></span><div class="dr-ctile-body"><div class="dr-ctile-name">'
+            f'<h3>{escape(name)}</h3><span>always on</span></div><p>{escape(words)}</p><div class="dr-ctags">{chips}</div>'
+            "</div></article>")
     return ('<section aria-labelledby="team-title"><div class="dr-section-head"><h2 id="team-title">Get to know your Agents '
-            'team</h2><p>Eight specialists, each with one job. They hand the work along, and work in parallel where '
-            f'they can.</p></div><div class="dr-team">{"".join(tiles)}</div></section>')
+            'team</h2><p>Eight specialists hand the work along, in parallel where they can; two more watch over every '
+            f'step.</p></div><div class="dr-team">{"".join(tiles)}</div>'
+            '<div class="dr-cross-head"><span>Cross-cutting · watching every step</span><i></i></div>'
+            f'<div class="dr-cross">{"".join(cross)}</div></section>')
 
 
 # ------------------------------------------------------------------ workflow graph
@@ -122,6 +170,19 @@ def _vrow(agent: str, name: str, note: str, note_class: str = "", kind: str = ""
             f'<small class="{note_class}">{note}</small></span></div>')
 
 
+def _cross_band() -> str:
+    """The always-on band under the stages: a tap from every step and one flowing lane per cross-cutting agent."""
+    taps = "".join(f'<div class="dr-abs dr-tap flow-yd" aria-hidden="true" style="left:calc({(i + 0.5) / 7 * 100:.2f}% - 1px)">'
+                   "</div>" for i in range(7))
+    lanes = "".join(
+        f'<div class="dr-abs dr-clane" style="top:{388 + n * 34}px"><span class="dr-clane-name"><span class="dr-ccore">'
+        f'{_icon(agent, 15)}</span>{escape(name)}</span><i class="flow-x" aria-hidden="true"></i><span class="dr-clane-out">'
+        f"{escape(outputs)}</span></div>"
+        for n, (agent, name, _words, _tags, outputs) in enumerate(CROSS_CUTTING))
+    return (f'{taps}<div class="dr-abs dr-cband" aria-hidden="true"></div><div class="dr-abs dr-cband-title">'
+            f"4 · Cross-cutting · always on</div>{lanes}")
+
+
 def workflow_graph_html() -> str:
     """The LangGraph workflow: stages, a flowing evidence rail, in-step fan-out, the parallel synthesis branch and
     the bounded follow-up loop. A desktop layout and a stacked phone layout (switched by CSS)."""
@@ -129,7 +190,7 @@ def workflow_graph_html() -> str:
                     for i, (agent, label, output, kind) in enumerate(_GRAPH_NODES))
     dots = 'class="dr-abs dr-dots {cls}" aria-hidden="true"'
     horizontal = f"""<div class="dr-wf-h">
-<div class="dr-abs dr-grid7" aria-hidden="true" style="inset:0">
+<div class="dr-abs dr-grid7" aria-hidden="true" style="left:0;right:0;top:0;height:338px">
 <div class="dr-band" style="grid-column:1/span 1;margin-right:5px"></div>
 <div class="dr-band" style="grid-column:2/span 4;margin:0 5px"></div>
 <div class="dr-band" style="grid-column:6/span 2;margin-left:5px"></div></div>
@@ -155,6 +216,7 @@ def workflow_graph_html() -> str:
 <div {dots.format(cls="v flow-x")} style="left:7.5%;width:7.5%;top:272px;height:4px"></div>
 <div class="dr-abs" aria-hidden="true" style="left:calc(15% - 2px);top:267px;width:0;height:0;border-top:7px solid transparent;border-bottom:7px solid transparent;border-left:10px solid var(--dr-violet)"></div>
 <div class="dr-abs" style="left:21.43%;width:35.71%;top:306px;display:flex;justify-content:center"><span class="dr-pill v">↺ follow-up round · bounded by budget</span></div>
+{_cross_band()}
 <ol class="dr-abs dr-nodes dr-grid7" style="left:0;right:0;top:42px">{nodes}</ol>
 <div class="dr-abs" style="left:71.43%;width:14.29%;top:172px">{_node("data_visualizer", "Data<br>Visualizer", "charts", "", 4.5).replace("<li", "<div").replace("</li>", "</div>")}</div>
 </div>"""
@@ -173,14 +235,19 @@ def workflow_graph_html() -> str:
                 + f'<div><span class="dr-node-icon">{_icon("data_visualizer", 16)}</span>Data Visualizer</div>'
                 + "<em>∥ run side by side</em></div>"
                 + _vrow("report_builder", "Report Builder", "waits for both, then writes the cited report", "acc", "final")
-                + "</div>")
+                + '<span class="dr-vband amber">4 · Cross-cutting · always on</span><div class="dr-vcross">'
+                + "".join(f'<div><span class="dr-ccore">{_icon(agent, 15)}</span><span><b>{escape(name)}</b>'
+                          f"<small>{escape(words.lower())}</small></span></div>"
+                          for agent, name, words, _tags, _outputs in CROSS_CUTTING)
+                + "</div></div>")
     legend = ('<div class="dr-legend">'
               '<span><span class="dr-dots flow-x" style="width:26px;height:4px;background-size:9px 4px"></span>Evidence flow</span>'
               '<span><span style="display:flex;flex-direction:column;gap:3px"><span class="dr-dots flow-x" '
               'style="width:22px;height:3px;background-size:8px 3px"></span><span class="dr-dots flow-x" '
               'style="width:22px;height:3px;background-size:8px 3px"></span></span>Runs in parallel</span>'
               '<span><span class="dr-dots v flow-xr" style="width:26px;height:4px;background-size:9px 4px"></span>Follow-up loop</span>'
-              '<span><span class="dr-diamond"></span>Decision</span></div>')
+              '<span><span class="dr-diamond"></span>Decision</span>'
+              '<span><span class="dr-cross-key"></span>Cross-cutting</span></div>')
     return (f'<section class="dr-wf" aria-labelledby="wf-title"><div class="dr-wf-head"><div><h2 id="wf-title">How an '
             "investigation flows</h2><p>The LangGraph workflow behind every run. Work fans out where it can, and "
             f"follow-up rounds repeat only while a gap is worth pursuing.</p></div>{legend}</div>{horizontal}{vertical}</section>")
