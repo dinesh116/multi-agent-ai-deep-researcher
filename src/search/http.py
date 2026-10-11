@@ -12,7 +12,7 @@ import socket
 import time
 from collections.abc import Callable
 from typing import TypeVar
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -59,6 +59,7 @@ def with_retries(fn: Callable[[], T], attempts: int = 3, base_delay: float = 1.0
 class HttpClient:
     def __init__(self, timeout: float = 20.0, contact_email: str | None = None, transport: httpx.BaseTransport | None = None):
         agent = "DeepResearcherAI/0.1 (research assistant" + (f"; mailto:{contact_email}" if contact_email else "") + ")"
+        self._fetch_timeout, self._fetch_transport = timeout, transport
         self.client = httpx.Client(timeout=timeout, headers={"User-Agent": agent}, follow_redirects=False,
                                    transport=transport)
 
@@ -90,14 +91,26 @@ class HttpClient:
     def safe_fetch(self, url: str, max_redirects: int = 3) -> str | None:
         """Fetch a public web page's HTML. Returns None (never raises) when blocked or unavailable."""
         for _ in range(max_redirects + 1):
-            if not is_public_http_url(url):
+            addresses = _public_addresses(url)
+            if not addresses:
                 logger.info("Blocked non-public URL")
                 return None
             try:
-                with span("http.fetch_attempt", metadata={"redirect_hop": _}) as telemetry, self.client.stream("GET", url) as response:
+                original = httpx.URL(url)
+                pinned = original.copy_with(host=addresses[0])
+                # A fresh per-hop client prevents a connection authenticated for another hostname
+                # on the same IP being reused. Proxies must not resolve the original host for us.
+                with httpx.Client(timeout=self._fetch_timeout, headers=self.client.headers,
+                                  transport=self._fetch_transport, trust_env=False,
+                                  follow_redirects=False) as fetch_client, \
+                     span("http.fetch_attempt", metadata={"redirect_hop": _}) as telemetry, \
+                     fetch_client.stream("GET", pinned, headers={"Host": original.netloc.decode("ascii")},
+                                         extensions={"sni_hostname": original.raw_host.decode("ascii")}) as response:
                     telemetry["http_status"] = response.status_code
                     if response.is_redirect:
-                        url = str(response.next_request.url) if response.next_request else ""
+                        url = urljoin(str(original), response.headers.get("location", ""))
+                        if not response.headers.get("location"):
+                            return None
                         continue
                     if response.status_code != 200:
                         return None
@@ -116,23 +129,33 @@ class HttpClient:
         return None
 
 
-def is_public_http_url(url: str) -> bool:
-    """Allow only http(s) URLs whose host resolves to public IP addresses (SSRF protection)."""
+def _public_addresses(url: str) -> list[str]:
+    """Resolve once and reject the whole answer set unless every address is globally routable."""
     try:
         parsed = urlparse(url)
-    except ValueError:
-        return False
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        return False
-    host = parsed.hostname
-    if host in ("localhost",) or host.endswith((".local", ".internal")):
-        return False
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror:
-        return False
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
-            return False
-    return True
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+            return []
+        normalized = httpx.URL(url)
+        host = normalized.raw_host.decode("ascii")
+        if host == "localhost" or host.endswith((".local", ".internal")):
+            return []
+        port = normalized.port or (443 if parsed.scheme == "https" else 80)
+        try:
+            literal = ipaddress.ip_address(host)
+        except ValueError:
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            addresses = [ipaddress.ip_address(info[4][0]) for info in infos]
+        else:
+            addresses = [literal]
+        if not addresses or any(not ip.is_global or ip.is_multicast or
+                                (ip.version == 6 and ip.ipv4_mapped and not ip.ipv4_mapped.is_global)
+                                for ip in addresses):
+            return []
+        return list(dict.fromkeys(str(ip) for ip in addresses))
+    except (OSError, ValueError, httpx.InvalidURL):
+        return []
+
+
+def is_public_http_url(url: str) -> bool:
+    """Check URL eligibility; safe_fetch also pins the connection to its validated DNS result."""
+    return bool(_public_addresses(url))

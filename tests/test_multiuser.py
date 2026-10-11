@@ -196,7 +196,16 @@ def test_rows_lowercase_column_names(tmp_path):
     assert Session(conn).rows('SELECT plan AS "PLAN" FROM t') == [{"plan": "x"}]  # as Turso returns it
 
 
-def test_backend_selection(tmp_path):
+def test_backend_selection(tmp_path, monkeypatch):
     from src.database.backend import SQLiteBackend, make_backend
     assert isinstance(make_backend(tmp_path / "a.db"), SQLiteBackend)
     assert isinstance(make_backend(tmp_path / "a.db", "libsql://x.turso.io", None), SQLiteBackend)  # token missing
+    assert isinstance(make_backend(tmp_path / "a.db", None, "test-token"), SQLiteBackend)  # URL missing
+    from unittest.mock import Mock
+    import src.database.backend as backend
+    constructor = Mock()
+    monkeypatch.setattr(backend, "TursoBackend", constructor)
+    selected = make_backend(tmp_path / "a.db", "libsql://example.turso.io", "test-token")
+    assert selected is constructor.return_value
+    constructor.assert_called_once_with("libsql://example.turso.io", "test-token",
+                                        replica_path=tmp_path / "turso-replica.db")

@@ -1,17 +1,15 @@
 """Numeric evidence, persistence and conservative claim validation."""
-from dataclasses import replace
-from types import SimpleNamespace
 import pytest
 
 from src.analysis.claim_validation import paraphrase_issues
-from src.analysis.visualization import extract_charts, numeric_cell
+from src.analysis.visualization import extract_charts
 from src.ingestion.extract import extract_csv, ExtractionError
 from src.models.evidence import Source, Origin, Passage, Claim, ClaimType
 from src.models.research import ResearchRequest
 from src.search.local import UploadedDocumentProvider
 from src.search.registry import ProviderSet
 from src.services.research_service import run_research
-from tests.conftest import QUESTION, TODAY
+from tests.conftest import TODAY
 from tests.test_multiuser import any_repo
 
 

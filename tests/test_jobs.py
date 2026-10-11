@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import pytest
 
-from src.models.research import ResearchMode, ResearchRequest, now, utc_now
+from src.models.research import ResearchMode, ResearchRequest, utc_now
 from src.services.jobs import RunLimitExceeded, RunManager, ServiceBusy
 from src.services.research_service import run_research
 from tests.conftest import QUESTION, TODAY

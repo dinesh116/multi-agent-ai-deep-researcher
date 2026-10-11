@@ -70,3 +70,13 @@ def test_malformed_usage_retains_unknown_allowance_without_double_release(total)
     assert budget.usage.llm_reserved_tokens == 0
     assert budget.usage.llm_unreported_tokens == 300
     assert not budget.usage.cost_estimate_complete
+
+
+def test_parallel_source_admission_remains_bounded():
+    budget = RunBudget(ResearchBudget(max_sources=3))
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        admitted = list(pool.map(lambda _: budget.add_sources(1), range(20)))
+    assert sum(admitted) == 3
+    assert budget.snapshot().sources == 3
+    assert "sources" in budget.snapshot().exhausted
+    assert budget.add_sources(1) == 0

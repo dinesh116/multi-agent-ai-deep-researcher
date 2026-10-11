@@ -6,7 +6,7 @@ from datetime import timedelta
 import pytest
 
 from src.models.evidence import AgentEvent
-from src.models.research import now, utc_now
+from src.models.research import utc_now
 from src.services.research_service import run_research
 from src.services.run_events import EventSink, ProgressTracker
 from tests.conftest import TODAY
@@ -216,3 +216,15 @@ def test_final_save_writes_full_log_when_sink_fell_behind(any_repo, settings, de
     state = run_research(demo_request, settings, repo=any_repo, today=TODAY, owner_id=ALICE)
     bundle = any_repo.load_run(state["run_id"], ALICE)
     assert len(bundle.events) == len(state["events"]) and bundle.summary.status == "completed"
+
+
+def test_progress_event_batch_retry_is_idempotent(any_repo, demo_request):
+    any_repo.create_run("run_retry", demo_request, ALICE)
+    batch = [event(), event(status="completed")]
+    for _ in range(2):
+        assert any_repo.update_progress("run_retry", ALICE, {"done": 1}, batch, 0)
+    assert any_repo.update_progress("run_retry", ALICE, {"done": 2}, [event("retriever")], 2)
+    progress = any_repo.get_progress("run_retry", ALICE)
+    assert progress.progress == {"done": 2} and progress.last_seq == 2
+    assert [e.agent for e in progress.events] == ["planner", "planner", "retriever"]
+    assert [e.status for e in progress.events] == ["started", "completed", "started"]

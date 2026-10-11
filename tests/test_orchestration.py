@@ -3,7 +3,7 @@ import pytest
 
 from src.agents.gap_analyst import decide_route
 from src.models.evidence import GapKind, ResearchGap
-from src.models.research import Depth, ResearchBudget, ResearchMode, ResearchRequest
+from src.models.research import Depth, ResearchBudget, ResearchRequest
 from src.orchestration.budget import RunBudget
 from src.orchestration.graph import AGENTS, build_graph, route_after_gaps
 from src.services.llm import LLMClient, LLMUnavailable

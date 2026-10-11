@@ -7,10 +7,6 @@ import time
 from src.models.research import BudgetUsage, ResearchBudget
 
 
-class BudgetExceeded(RuntimeError):
-    pass
-
-
 class RunBudget:
     def __init__(self, budget: ResearchBudget, clock=time.monotonic):
         self.budget = budget
@@ -60,9 +56,6 @@ class RunBudget:
     def record_cache_hit(self) -> None:
         with self._lock:
             self.usage.cache_hits += 1
-
-    def sources_left(self) -> int:
-        return max(0, self.budget.max_sources - self.usage.sources)
 
     def add_sources(self, count: int) -> int:
         """Admit up to `count` new sources; returns how many were admitted."""
@@ -133,10 +126,6 @@ class RunBudget:
             self.usage.cost_estimate_complete = bool(input_price and output_price and inp is not None and out is not None
                     and not self.usage.llm_unreported_tokens
                     and self.usage.input_tokens + self.usage.output_tokens == self.usage.llm_tokens)
-
-    def record_tokens(self, tokens: int) -> None:
-        with self._lock:
-            self.usage.llm_tokens += max(0, int(tokens or 0))
 
     def snapshot(self, iterations: int | None = None) -> BudgetUsage:
         with self._lock:

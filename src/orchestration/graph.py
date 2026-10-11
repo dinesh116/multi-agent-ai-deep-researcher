@@ -135,13 +135,3 @@ def build_graph(ctx: RunContext):
     graph.add_edge(SYNTHESIS_BRANCHES, "report_builder")  # fan-in: the report waits for both branches
     graph.add_edge("report_builder", END)
     return graph.compile()
-
-
-def graph_mermaid() -> str:
-    from src.config import get_settings
-    from src.orchestration.budget import RunBudget
-    from src.models.research import ResearchBudget
-    from src.search.registry import ProviderSet
-
-    ctx = RunContext(settings=get_settings(), budget=RunBudget(ResearchBudget()), providers=ProviderSet())
-    return build_graph(ctx).get_graph().draw_mermaid()

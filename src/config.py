@@ -49,10 +49,6 @@ class Settings:
     max_queued_runs: int = 10  # queued + running investigations across all users before new ones are refused
 
     @property
-    def uses_turso(self) -> bool:
-        return bool(self.turso_database_url and self.turso_auth_token)
-
-    @property
     def llm_configured(self) -> bool:
         return bool(self.openrouter_api_key)
 

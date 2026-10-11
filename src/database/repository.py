@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from src.database.backend import SQLiteBackend, make_backend
+from src.database.backend import make_backend
 from src.models.profile import UserProfile
 from src.models.evidence import (AgentEvent, AgentStatus, Claim, Contradiction, EvidenceLink, Insight, MatrixRow,
                                  Passage, Report, ResearchGap, Source, SourceAssessment)
@@ -259,12 +259,6 @@ class Repository:
         db.insert_many("events", ("run_id", "seq", "timestamp", "agent", "status", "message", "data"), [
             (run_id, start_seq + n, e.timestamp.isoformat(), e.agent, e.status, e.message, _dump(e))
             for n, e in enumerate(events)])
-
-    def append_events(self, run_id: str, events: list[AgentEvent], start_seq: int) -> None:
-        """Persist a batch of events numbered from `start_seq` (re-sending a batch is harmless)."""
-        if events:
-            with self.backend.session() as db:
-                self._insert_events(db, run_id, events, start_seq)
 
     def update_progress(self, run_id: str, owner_id: str, progress: dict | None = None,
                         events: list[AgentEvent] = (), start_seq: int = 0, worker_id: str | None = None) -> ProgressAck:

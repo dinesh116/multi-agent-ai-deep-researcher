@@ -78,8 +78,13 @@ complete prevention.
 ## 5. Network and content handling
 
 - **SSRF protection.** `safe_fetch` allows only public `http(s)` addresses, blocking private, loopback,
-  link-local and cloud-metadata ranges. Redirects are followed manually and every hop is re-checked; size and
-  content type are capped.
+  link-local, non-global and cloud-metadata ranges. Each hop resolves once, rejects mixed public/private DNS
+  answers, and connects to a validated literal IP. The original hostname remains the HTTP Host and TLS
+  certificate/SNI identity. A fresh client per hop prevents cross-host connection reuse; environment proxies
+  are disabled for page fetching so they cannot bypass IP pinning. Redirects are resolved against the original
+  URL and validated independently. Size, timeout and content-type limits remain in place.
+  Offline regression tests exercise the real HTTPX/httpcore path with simulated DNS and TCP, including rebinding,
+  redirects, TLS identity and proxy settings. Hosted end-to-end fetching still needs deployment verification.
 - **Uploads** are limited to PDF, text, Markdown and CSV, 15 MB, 300 PDF pages, 400,000 characters and 2,000 CSV
   rows.
 - **Rendering.** HTML export escapes source markup. User-controlled text placed into page HTML (display names,

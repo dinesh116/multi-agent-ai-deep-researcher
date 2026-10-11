@@ -61,7 +61,7 @@ Implemented today: `queued`, `running`, `completed`, `cancelled` and `failed`. A
   the page); `EventSink` assigns sequence numbers, buffers events and writes them in batches (every
   `RUN_EVENT_FLUSH_SECONDS` or 20 events) together with progress and a heartbeat. A background heartbeat keeps
   long, silent steps (an LLM call) from looking stale.
-- Repository: `append_events`, `update_progress`, `get_progress`, `request_cancel`, `is_cancel_requested`,
+- Repository: `update_progress`, `get_progress`, `request_cancel`, `is_cancel_requested`,
   `count_active_runs`, `reap_stale_runs`. `reap_stale_runs` replaces `mark_stale_runs` and only fails runs whose
   heartbeat is older than `RUN_STALE_AFTER_SECONDS`.
 - `save_run_results` no longer rewrites events that the sink already persisted.
