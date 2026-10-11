@@ -6,7 +6,7 @@ from datetime import timedelta
 import pytest
 
 from src.models.evidence import AgentEvent
-from src.models.research import now
+from src.models.research import now, utc_now
 from src.services.research_service import run_research
 from src.services.run_events import EventSink, ProgressTracker
 from tests.conftest import TODAY
@@ -20,7 +20,7 @@ def event(agent="planner", status="started", message="m", **metrics):
 def backdate_heartbeat(repo, run_id, seconds):
     with repo.backend.session() as db:
         db.execute("UPDATE runs SET heartbeat_at = ? WHERE id = ?",
-                   ((now() - timedelta(seconds=seconds)).isoformat(), run_id))
+                   ((utc_now() - timedelta(seconds=seconds)).isoformat(), run_id))
 
 
 class FakeClock:
@@ -93,6 +93,26 @@ def test_heartbeat_keeps_a_run_alive(any_repo, demo_request):
     backdate_heartbeat(any_repo, "run_slow", 600)
     assert any_repo.update_progress("run_slow", ALICE)  # heartbeat only
     assert any_repo.reap_stale_runs(stale_after_seconds=120) == []
+
+
+def test_heartbeats_agree_across_hosts_in_different_timezones(any_repo, demo_request, monkeypatch):
+    """A laptop in UTC+5:30 and a cloud host in UTC share one database: neither may reap the other's live run."""
+    import src.database.repository as repository
+    from datetime import datetime, timezone
+
+    def host_clock(offset_hours):
+        return lambda: (datetime.now(timezone.utc) + timedelta(hours=offset_hours)).replace(tzinfo=None, microsecond=0)
+
+    monkeypatch.setattr(repository, "now", host_clock(0))  # cloud host (UTC) starts a run
+    any_repo.create_run("run_cloud", demo_request, ALICE, worker_id="cloud")
+    assert any_repo.update_progress("run_cloud", ALICE, {"step": 1})
+    monkeypatch.setattr(repository, "now", host_clock(5.5))  # the laptop (IST) runs maintenance
+    assert any_repo.reap_stale_runs(stale_after_seconds=120) == []
+    any_repo.create_run("run_laptop", demo_request, BOB, worker_id="laptop")
+    monkeypatch.setattr(repository, "now", host_clock(0))  # and the cloud host does too
+    assert any_repo.reap_stale_runs(stale_after_seconds=120) == []
+    backdate_heartbeat(any_repo, "run_laptop", 600)  # once the laptop really stops, the cloud reaps it
+    assert any_repo.reap_stale_runs(stale_after_seconds=120) == ["run_laptop"]
 
 
 def test_migration_adds_execution_columns(tmp_path):

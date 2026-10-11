@@ -220,3 +220,15 @@ def test_profile_is_saved_validated_and_private():
     assert profile.research_interests == ["Artificial intelligence", "Quantum sensing"]
     get_repo().delete_user_data("local")
     assert get_repo().get_profile("local").display_name == ""
+
+
+def test_display_name_is_escaped_in_the_greeting(monkeypatch):
+    """The profile display name is user-editable, so the home greeting must show it as text, never as markup."""
+    import src.ui.state as ui
+    hostile = ui.CurrentUser("local", None, '<img src=x onerror="alert(1)"> Ada', is_guest=False, is_admin=True,
+                             auth_enabled=False, provider="local")
+    monkeypatch.setattr(ui, "current_user", lambda: hostile)
+    at = app(with_auth=False)
+    assert not at.exception
+    greeting = next(m.value for m in at.markdown if "dr-greet" in m.value)
+    assert "<img" not in greeting and "&lt;img" in greeting

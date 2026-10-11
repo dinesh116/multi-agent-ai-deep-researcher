@@ -17,7 +17,7 @@ from src.database.backend import SQLiteBackend, make_backend
 from src.models.profile import UserProfile
 from src.models.evidence import (AgentEvent, AgentStatus, Claim, Contradiction, EvidenceLink, Insight, MatrixRow,
                                  Passage, Report, ResearchGap, Source, SourceAssessment)
-from src.models.research import BudgetUsage, ResearchPlan, ResearchRequest, new_id, now
+from src.models.research import BudgetUsage, ResearchPlan, ResearchRequest, new_id, now, utc_now
 from src.models.run import ACTIVE_STATUSES, RunBundle, RunProgress, RunSummary
 from src.models.visualization import EvidenceChart
 
@@ -125,12 +125,11 @@ class Repository:
     # ------------------------------------------------------------------ runs
     def create_run(self, run_id: str, request: ResearchRequest, owner_id: str = LOCAL_OWNER, status: str = "running",
                    worker_id: str | None = None) -> None:
-        stamp = now().isoformat()
         with self.backend.session() as db:
             db.execute("INSERT INTO runs (id, owner_id, question, status, mode, created_at, parent_run_id, request, "
                        "worker_id, heartbeat_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                       (run_id, owner_id, request.question, status, request.mode.value, stamp,
-                        request.parent_run_id, request.model_dump_json(), worker_id, stamp))
+                       (run_id, owner_id, request.question, status, request.mode.value, now().isoformat(),
+                        request.parent_run_id, request.model_dump_json(), worker_id, utc_now().isoformat()))
 
     def save_run_results(self, run_id: str, state: dict, status: str, owner_id: str = LOCAL_OWNER,
                          events_persisted: bool = False) -> None:
@@ -278,7 +277,7 @@ class Repository:
             changed = db.execute(
                 "UPDATE runs SET heartbeat_at = ?, worker_id = COALESCE(?, worker_id), "
                 "progress = COALESCE(?, progress) WHERE id = ? AND owner_id = ? AND status IN ('queued', 'running')",
-                (now().isoformat(), worker_id, json.dumps(progress) if progress is not None else None, run_id, owner_id))
+                (utc_now().isoformat(), worker_id, json.dumps(progress) if progress is not None else None, run_id, owner_id))
             if not changed:
                 return ProgressAck(active=False)
             if events:
@@ -321,7 +320,7 @@ class Repository:
         with self.backend.session() as db:
             return bool(db.execute("UPDATE runs SET status = 'running', worker_id = ?, heartbeat_at = ? "
                                    "WHERE id = ? AND owner_id = ? AND status = 'queued'",
-                                   (worker_id, now().isoformat(), run_id, owner_id)))
+                                   (worker_id, utc_now().isoformat(), run_id, owner_id)))
 
     def fail_run(self, run_id: str, owner_id: str, error: str) -> None:
         """Mark an active run failed when its worker could not even produce a partial result."""
@@ -337,7 +336,7 @@ class Repository:
         marks = ",".join("?" * len(run_ids))
         with self.backend.session() as db:
             db.execute(f"UPDATE runs SET heartbeat_at = ? WHERE status = 'queued' AND id IN ({marks})",
-                       [now().isoformat(), *run_ids])
+                       [utc_now().isoformat(), *run_ids])
 
     def is_cancel_requested(self, run_id: str) -> bool:
         with self.backend.session() as db:
@@ -356,7 +355,7 @@ class Repository:
 
         Runs with a recent heartbeat are left alone, even when another app instance owns them.
         """
-        cutoff = (now() - timedelta(seconds=stale_after_seconds)).isoformat()
+        cutoff = (utc_now() - timedelta(seconds=stale_after_seconds)).isoformat()  # heartbeats are stored in UTC
         stale = "status IN ('queued', 'running') AND (heartbeat_at IS NULL OR heartbeat_at < ?)"
         with self.backend.session() as db:
             ids = [r["id"] for r in db.rows(f"SELECT id FROM runs WHERE {stale}", (cutoff,))]

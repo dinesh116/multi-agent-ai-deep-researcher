@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -15,6 +15,15 @@ def new_id(prefix: str) -> str:
 
 def now() -> datetime:
     return datetime.now().replace(microsecond=0)
+
+
+def utc_now() -> datetime:
+    """Naive UTC time for values compared across machines (run heartbeats).
+
+    `now()` is the server's local time, which differs between a laptop and a cloud host sharing one database; a
+    heartbeat written in UTC+5:30 would look hours stale (or in the future) to a host running in UTC.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
 
 
 class Depth(StrEnum):

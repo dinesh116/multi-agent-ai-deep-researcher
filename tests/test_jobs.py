@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import pytest
 
-from src.models.research import ResearchMode, ResearchRequest, now
+from src.models.research import ResearchMode, ResearchRequest, now, utc_now
 from src.services.jobs import RunLimitExceeded, RunManager, ServiceBusy
 from src.services.research_service import run_research
 from tests.conftest import QUESTION, TODAY
@@ -196,7 +196,7 @@ def test_maintenance_heartbeats_queue_and_reaps_dead_runs(repo, settings, demo_r
     repo.create_run("run_orphan", demo_request, CAROL, worker_id="crashed-instance")
     with repo.backend.session() as db:
         db.execute("UPDATE runs SET heartbeat_at = ? WHERE id IN (?, ?)",
-                   ((now() - timedelta(seconds=600)).isoformat(), waiting, "run_orphan"))
+                   ((utc_now() - timedelta(seconds=600)).isoformat(), waiting, "run_orphan"))
     for _ in range(100):  # within a few maintenance ticks
         if status(repo, "run_orphan", CAROL) == "failed" and repo.reap_stale_runs(120) == []:
             break

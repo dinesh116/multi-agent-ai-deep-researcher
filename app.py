@@ -7,6 +7,7 @@ land on their research home: question composer, the agents team, the workflow gr
 """
 import logging
 from datetime import datetime
+from html import escape
 from zoneinfo import ZoneInfo
 
 import streamlit as st
@@ -92,7 +93,7 @@ def advanced_from_home() -> None:
 
 def landing() -> None:
     user = current_user()
-    html(f'<div class="dr-greet"><h1>{greeting(user.name)}</h1>'
+    html(f'<div class="dr-greet"><h1>{escape(greeting(user.name))}</h1>'
          "<p>Your research team is ready. Ask a question to start an investigation.</p></div>")
     st.write("")
     composer, figure = st.columns([3, 2], gap="medium")
