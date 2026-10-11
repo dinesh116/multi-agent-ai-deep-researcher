@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from src.database.backend import SQLiteBackend, make_backend
+from src.models.profile import UserProfile
 from src.models.evidence import (AgentEvent, AgentStatus, Claim, Contradiction, EvidenceLink, Insight, MatrixRow,
                                  Passage, Report, ResearchGap, Source, SourceAssessment)
 from src.models.research import BudgetUsage, ResearchPlan, ResearchRequest, new_id, now
@@ -386,6 +387,7 @@ class Repository:
             db.execute("DELETE FROM documents WHERE owner_id = ?", (owner_id,))
             db.execute("DELETE FROM activity WHERE owner_id = ?", (owner_id,))
             db.execute("DELETE FROM settings WHERE key LIKE ?", (f"user:{owner_id}:%",))
+            db.execute("DELETE FROM users WHERE id = ?", (owner_id,))
         return len(runs)
 
     # ------------------------------------------------------------------ Q&A history (scoped through the run's owner)
@@ -477,6 +479,17 @@ class Repository:
             raise ValueError("Secrets must be configured in .env or Streamlit Secrets, not stored in the database.")
         with self.backend.session() as db:
             db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, json.dumps(value)))
+
+    # ------------------------------------------------------------------ profile (personal, optional)
+    def get_profile(self, owner_id: str) -> UserProfile:
+        stored = self.get_user_setting(owner_id, "profile")
+        try:
+            return UserProfile.model_validate(stored) if stored else UserProfile()
+        except ValueError:  # an older or damaged record: start again rather than fail the page
+            return UserProfile()
+
+    def save_profile(self, owner_id: str, profile: UserProfile) -> None:
+        self.set_user_setting(owner_id, "profile", profile.model_dump())
 
     def get_user_setting(self, owner_id: str, key: str, default: Any = None) -> Any:
         return self.get_setting(f"user:{owner_id}:{key}", default)

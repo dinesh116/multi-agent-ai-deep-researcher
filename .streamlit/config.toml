@@ -1,48 +1,76 @@
-# Theme from the "Synthora" wireframe: soft paper background, white cards, violet accent, navy ink,
-# DM Sans for text and Manrope for headings. The wireframe is light-only, so a single light theme is defined.
+# Deep Research Agent theme: high-contrast dark and light modes. Both variants are defined, so the app follows the
+# device setting and users can switch in the app menu (⋮ → Settings → Theme). The frosted-glass layer in
+# src/ui/components.py adapts to the active mode with CSS light-dark(), using the same palette as below.
+# Palette: deep navy ground, cyan accent, soft violet second accent. Sora headings, DM Sans body, JetBrains Mono code.
 
 [theme]
-base = "light"
-font = "DM Sans:https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap, sans-serif"
-headingFont = "Manrope:https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap, sans-serif"
-codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap, monospace"
+font = "'DM Sans':https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap, sans-serif"
+headingFont = "Sora:https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&display=swap, sans-serif"
+codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap, monospace"
 baseFontSize = 15
-headingFontWeights = [800, 700, 700, 700, 600, 600]
-headingFontSizes = ["2.3rem", "1.45rem", "1.15rem", "1.02rem", "0.95rem", "0.9rem"]
+headingFontWeights = [700, 600, 600, 600, 600, 600]
+headingFontSizes = ["2.2rem", "1.45rem", "1.15rem", "1.02rem", "0.95rem", "0.9rem"]
 metricValueFontWeight = 700
-baseRadius = "0.6rem"
-buttonRadius = "7px"
+baseRadius = "0.85rem"
+buttonRadius = "12px"
 showWidgetBorder = true
 showSidebarBorder = true
 linkUnderline = false
 
-primaryColor = "#7159dc"
-backgroundColor = "#f7f7fb"
-secondaryBackgroundColor = "#ffffff"
-textColor = "#1d2038"
-borderColor = "#e4e4ee"
-dataframeBorderColor = "#ececf3"
-dataframeHeaderBackgroundColor = "#f5f4fa"
-linkColor = "#6751cc"
-codeBackgroundColor = "#f5f4fa"
-blueColor = "#4181bf"
-greenColor = "#27876e"
-orangeColor = "#b78127"
-yellowColor = "#e0a526"
-redColor = "#c0392b"
-violetColor = "#7159dc"
-chartCategoricalColors = ["#7159dc", "#27876e", "#4181bf", "#b78127", "#c0568c", "#389592", "#9294a6"]
+[theme.light]
+primaryColor = "#0A7EA4"
+backgroundColor = "#F2F6FB"
+secondaryBackgroundColor = "#E6EDF6"
+textColor = "#0B1220"
+borderColor = "#D3DCE8"
+linkColor = "#086A8A"
+codeBackgroundColor = "#E6EDF6"
+dataframeBorderColor = "#D9E1EC"
+dataframeHeaderBackgroundColor = "#E9EFF7"
+blueColor = "#1D6FB8"
+greenColor = "#047857"
+orangeColor = "#B45309"
+yellowColor = "#A16207"
+redColor = "#B91C1C"
+violetColor = "#5A49D6"
+grayColor = "#4A5470"
+chartCategoricalColors = ["#0A7EA4", "#5A49D6", "#047857", "#B45309", "#BE185D", "#0F766E", "#4A5470"]
 
-[theme.sidebar]
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f7f6fc"
-borderColor = "#e9eaf1"
+[theme.light.sidebar]
+backgroundColor = "#F8FAFD"
+secondaryBackgroundColor = "#EAF0F8"
+borderColor = "#DCE4EE"
+
+[theme.dark]
+primaryColor = "#3BDCFF"
+backgroundColor = "#070B18"
+secondaryBackgroundColor = "#111A30"
+textColor = "#EEF2FF"
+borderColor = "#26324F"
+linkColor = "#7BE8FF"
+codeBackgroundColor = "#0E1629"
+dataframeBorderColor = "#22304D"
+dataframeHeaderBackgroundColor = "#111A30"
+blueColor = "#60A5FA"
+greenColor = "#34D399"
+orangeColor = "#FBBF24"
+yellowColor = "#FDE047"
+redColor = "#F87171"
+violetColor = "#9A8CFF"
+grayColor = "#AAB4D0"
+chartCategoricalColors = ["#3BDCFF", "#9A8CFF", "#34D399", "#FBBF24", "#F472B6", "#2DD4BF", "#AAB4D0"]
+
+[theme.dark.sidebar]
+backgroundColor = "#0A1022"
+secondaryBackgroundColor = "#131D36"
+borderColor = "#1E2945"
 
 [server]
 maxUploadSize = 15
+enableStaticServing = true  # serves ./static (logo, hero image) at app/static/ for the glass hero layouts
 
 [client]
-toolbarMode = "minimal"  # hides the developer "Deploy" button
+toolbarMode = "viewer"  # keeps the menu's Settings (theme switch) and hides developer options such as "Deploy"
 
 [browser]
 gatherUsageStats = false

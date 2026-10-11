@@ -25,6 +25,9 @@ from src.models.run import ACTIVE_STATUSES, RunBundle
 from src.services.jobs import RunManager
 from src.search.registry import ProviderSettings
 
+LOGO = "assets/logo.png"  # round crop of the Deep Research Agent robot
+SIGN_IN_PAGE = "app_pages/0_Sign_in.py"
+PROFILE_PAGE = "app_pages/9_Profile.py"
 DEFAULTS = {"depth": "standard", "max_iterations": 2, "mode": "live", "use_llm": True, "include_demo_banner": True}
 
 
@@ -37,6 +40,7 @@ class CurrentUser:
     is_admin: bool
     auth_enabled: bool
     picture: str | None = None
+    provider: str | None = None  # google | microsoft | email | local
 
     @property
     def can_use_live(self) -> bool:
@@ -62,22 +66,39 @@ def get_run_manager() -> RunManager:
 logger = logging.getLogger(__name__)
 
 
+# Identity providers the app knows, in the order their buttons appear. Each needs an [auth.<name>] section with
+# client_id, client_secret and server_metadata_url. "email" is any hosted OIDC service that offers email sign-up and
+# password reset (for example Auth0): passwords are entered on the provider's page, never in this app.
+PROVIDERS = {"google": "Google", "microsoft": "Microsoft", "email": "email"}
+PROVIDER_FIELDS = ("client_id", "client_secret", "server_metadata_url")
+
+
+def _filled(value) -> bool:
+    return bool(isinstance(value, str) and value.strip() and "<" not in value)
+
+
+def configured_providers() -> list[str]:
+    """Providers with complete settings; [] when secrets are missing or unreadable."""
+    try:
+        auth = st.secrets.get("auth", {})
+        return [name for name in PROVIDERS
+                if all(_filled(auth.get(name, {}).get(field)) for field in PROVIDER_FIELDS)]
+    except Exception:
+        return []
+
+
 def auth_enabled() -> bool:
     """Validate configuration and optionally log field status, never values or exception text."""
     fields = {}
+    providers: list[str] = []
     error_type = None
     callback_https = callback_path_ok = callback_local = False
     try:
         auth = st.secrets.get("auth", {})
-        provider = auth.get("google", {})
-        fields = {"auth.redirect_uri": auth.get("redirect_uri"),
-                  "auth.cookie_secret": auth.get("cookie_secret"),
-                  "auth.google.client_id": provider.get("client_id"),
-                  "auth.google.client_secret": provider.get("client_secret"),
-                  "auth.google.server_metadata_url": provider.get("server_metadata_url")}
-        fields = {name: bool(isinstance(value, str) and value.strip() and "<" not in value)
-                  for name, value in fields.items()}
-        valid = all(fields.values())
+        fields = {"auth.redirect_uri": _filled(auth.get("redirect_uri")),
+                  "auth.cookie_secret": _filled(auth.get("cookie_secret"))}
+        providers = configured_providers()
+        valid = all(fields.values()) and bool(providers)
         if fields["auth.redirect_uri"]:
             try:
                 callback = urlsplit(auth.get("redirect_uri"))
@@ -90,31 +111,47 @@ def auth_enabled() -> bool:
         valid = False
         error_type = type(exc).__name__
     diagnostics = os.getenv("AUTH_DIAGNOSTICS", "false").lower() in {"true", "1", "yes"}
-    signature = (valid, tuple(fields.items()), error_type, callback_https, callback_path_ok, callback_local)
+    signature = (valid, tuple(fields.items()), tuple(providers), error_type, callback_https, callback_path_ok,
+                 callback_local)
     if diagnostics and st.session_state.get("_auth_diagnostic_signature") != signature:
-        logger.warning("AUTH_CONFIG valid=%s field_status=%s secrets_error_type=%s "
+        logger.warning("AUTH_CONFIG valid=%s field_status=%s providers=%s secrets_error_type=%s "
                        "callback_https=%s callback_path_ok=%s callback_local=%s",
-                       valid, fields, error_type, callback_https, callback_path_ok, callback_local)
+                       valid, fields, providers, error_type, callback_https, callback_path_ok, callback_local)
         st.session_state["_auth_diagnostic_signature"] = signature
     return valid
 
 
-def login_google() -> None:
-    """Log login initiation and synchronous failures without exposing OAuth data."""
-    logger.warning("AUTH_LOGIN_START provider=google")
+def login(provider: str) -> None:
+    """Start sign-in with a configured provider. Logs initiation and failures without exposing OAuth data."""
+    if provider not in configured_providers():
+        st.error("This sign-in option is not available.")
+        return
+    logger.warning("AUTH_LOGIN_START provider=%s", provider)
     try:
-        st.login("google")
+        st.login(provider)
     except Exception as exc:
-        logger.error("AUTH_LOGIN_FAILED exception_type=%s", type(exc).__name__)
-        st.error("Google sign-in could not start. Check authentication configuration and server logs.")
+        logger.error("AUTH_LOGIN_FAILED provider=%s exception_type=%s", provider, type(exc).__name__)
+        st.error("Sign-in could not start. Check authentication configuration and server logs.")
+
+
+def provider_for_issuer(issuer) -> str | None:
+    """Which configured provider signed this identity token, matched by the issuer's host (None if unknown)."""
+    host = urlsplit(issuer).hostname if isinstance(issuer, str) else None
+    if not host:
+        return None
+    auth = st.secrets.get("auth", {})
+    for name in configured_providers():
+        if urlsplit(auth[name]["server_metadata_url"]).hostname == host:
+            return name
+    return None
 
 
 def require_auth_configuration() -> None:
     """Stop deployed apps before opening the shared repository when auth is unavailable."""
     if get_settings().app_env != "local" and not auth_enabled():
         logger.error("AUTH_BLOCKED production authentication configuration is missing, incomplete or unreadable")
-        st.error("Authentication is required in production. Configure Google sign-in in Streamlit Secrets. "
-                 "For a private local development session only, explicitly set APP_ENV=local.")
+        st.error("Authentication is required in production. Configure sign-in ([auth] and at least one provider) "
+                 "in Streamlit Secrets. For a private local development session only, explicitly set APP_ENV=local.")
         st.stop()
 
 
@@ -122,24 +159,36 @@ def current_user() -> CurrentUser:
     require_auth_configuration()
     settings = get_settings()
     if not auth_enabled():
-        return CurrentUser(LOCAL_OWNER, None, "Local user", is_guest=False, is_admin=True, auth_enabled=False)
+        return CurrentUser(LOCAL_OWNER, None, "Local user", is_guest=False, is_admin=True, auth_enabled=False,
+                           provider="local")
     if st.user.get("is_logged_in", False):  # st.user may lack the attribute before auth initialises
         subject = st.user.get("sub")
         if not isinstance(subject, str) or not subject.strip():
             logger.error("AUTH_SESSION_INVALID provider subject is missing or invalid")
             st.error("Your sign-in session has no valid identity. Please sign out and sign in again.")
             st.stop()
-        user_id = subject
+        provider = provider_for_issuer(st.user.get("iss"))
+        if provider is None:  # fail closed: never accept an identity from an issuer that is not configured
+            logger.error("AUTH_SESSION_INVALID issuer is not a configured provider")
+            st.error("Your sign-in session comes from an identity provider this app does not accept. Please sign out "
+                     "and sign in again.")
+            st.stop()
+        # Subjects are unique per issuer only. Google keeps its raw subject (existing accounts keep their data);
+        # other providers are namespaced so two issuers can never map to the same account.
+        user_id = subject if provider == "google" else f"{provider}:{subject}"
         email = (st.user.get("email") or "").lower() or None
+        # Admin rights need a verified address: email sign-up would otherwise let anyone claim an admin's email.
+        verified = st.user.get("email_verified") is True
         if st.session_state.get("_user_recorded") != user_id:  # once per session: profile + login activity
-            logger.warning("AUTH_SESSION_ACCEPTED provider=google subject_present=true")
+            logger.warning("AUTH_SESSION_ACCEPTED provider=%s subject_present=true", provider)
             repo = get_repo()
-            repo.upsert_user(user_id, email, st.user.get("name"), st.user.get("picture"), provider="google")
-            repo.log_activity(user_id, "login", detail={"email": email})
+            repo.upsert_user(user_id, email, st.user.get("name"), st.user.get("picture"), provider=provider)
+            repo.log_activity(user_id, "login", detail={"email": email, "provider": provider})
             st.session_state["_user_recorded"] = user_id
-        return CurrentUser(user_id, email, st.user.get("name") or email or "Signed-in user", is_guest=False,
-                           is_admin=bool(email and email in settings.admin_emails), auth_enabled=True,
-                           picture=st.user.get("picture"))
+        name = get_repo().get_profile(user_id).display_name or st.user.get("name") or email or "Signed-in user"
+        return CurrentUser(user_id, email, name, is_guest=False,
+                           is_admin=bool(email and verified and email in settings.admin_emails), auth_enabled=True,
+                           picture=st.user.get("picture"), provider=provider)
     guest = st.session_state.setdefault("_guest_id", f"guest:{uuid.uuid4().hex[:12]}")
     return CurrentUser(guest, None, "Guest", is_guest=True, is_admin=False, auth_enabled=True)
 
@@ -240,7 +289,7 @@ def profile_block(user: CurrentUser) -> None:
     elif user.is_guest:
         plan = "Demo mode only"
     else:
-        plan = user.email or "Signed in"
+        plan = f"Signed in with {PROVIDERS.get(user.provider or '', 'your account')}"
     avatar = (f'<img src="{escape(user.picture)}" alt="">' if user.picture and user.picture.startswith("https://")
               else escape(initials(user.name)))
     st.markdown(f'<div class="ds-profile"><div class="ds-avatar">{avatar}</div><div><b>{escape(user.name)}'
@@ -250,15 +299,15 @@ def profile_block(user: CurrentUser) -> None:
         return
     if user.is_guest:
         st.caption("Sign in to run live research on any question and keep a private history.")
-        st.button("Sign in with Google", icon=":material/login:", on_click=login_google,
-                  width="stretch", type="primary", key="side_signin")
+        if st.button("Sign in", icon=":material/login:", width="stretch", type="primary", key="side_signin"):
+            st.switch_page(SIGN_IN_PAGE)
     else:
         st.button("Sign out", icon=":material/logout:", on_click=st.logout, width="stretch", key="side_signout")
 
 
 def sidebar() -> None:
     user = current_user()
-    st.logo("assets/logo.svg", size="large", icon_image="assets/icon.svg")
+    st.logo(LOGO, size="large", icon_image=LOGO)
     with st.sidebar:
         if st.button("New research", icon=":material/add:", key="side_new", width="stretch"):
             new_research()

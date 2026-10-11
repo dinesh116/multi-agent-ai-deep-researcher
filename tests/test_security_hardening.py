@@ -40,7 +40,9 @@ def test_production_with_configured_auth_is_guest(monkeypatch):
     app.secrets["auth"] = AUTH_SECRETS
     app.run()
     assert not app.exception and not app.error
-    assert any("Sign in with Google" in b.label for b in app.button)
+    assert any(b.label == "Sign in" for b in app.button)  # the public home offers sign-in
+    app.switch_page("app_pages/0_Sign_in.py").run()
+    assert not app.exception and any(b.label == "Continue with Google" for b in app.button)
 
 
 def test_environment_defaults_to_production_and_rejects_typos(monkeypatch):
@@ -143,3 +145,83 @@ def test_report_rejects_changed_citations_and_wraps_drafts(settings, rewritten):
     assert result is None
     assert '<untrusted_source id="draft_summary">' in llm.prompts[0]
     assert '<untrusted_source id="draft_analysis">' in llm.prompts[0]
+
+
+# ------------------------------------------------------------------ multiple identity providers
+from tests.test_ui_auth import ALL_PROVIDERS  # noqa: E402
+
+
+class FakeRepo:
+    def __init__(self):
+        self.users = []
+
+    def upsert_user(self, user_id, *args, **kwargs):
+        self.users.append(user_id)
+
+    def log_activity(self, *args, **kwargs):
+        pass
+
+    def get_profile(self, owner_id):
+        from src.models.profile import UserProfile
+        return UserProfile()
+
+
+def signed_in(monkeypatch, claims, admins=("boss@example.org",)):
+    import src.ui.state as ui
+    def stop():
+        raise RuntimeError("stopped")
+    errors = []
+    repo = FakeRepo()
+    monkeypatch.setattr(ui, "get_settings", lambda: SimpleNamespace(app_env="production", admin_emails=admins))
+    monkeypatch.setattr(ui, "get_repo", lambda: repo)
+    monkeypatch.setattr(ui, "st", SimpleNamespace(secrets={"auth": ALL_PROVIDERS}, session_state={},
+                                                  user={"is_logged_in": True, **claims}, error=errors.append, stop=stop))
+    return ui, errors, repo
+
+
+def test_identity_is_namespaced_by_issuer(monkeypatch):
+    ui, _, _ = signed_in(monkeypatch, {"sub": "123", "iss": "https://accounts.google.com"})
+    google = ui.current_user()
+    assert google.id == "123" and google.provider == "google"  # existing Google accounts keep their ids
+    ui, _, _ = signed_in(monkeypatch, {"sub": "123", "iss": "https://example-tenant.eu.auth0.com/"})
+    email = ui.current_user()
+    assert email.id == "email:123" and email.provider == "email"  # same subject, different issuer: different user
+    ui, _, _ = signed_in(monkeypatch, {"sub": "123", "iss": "https://login.microsoftonline.com/tenant-id/v2.0"})
+    assert ui.current_user().id == "microsoft:123"
+
+
+def test_unknown_issuer_is_rejected(monkeypatch):
+    ui, errors, repo = signed_in(monkeypatch, {"sub": "123", "iss": "https://evil.example.com"})
+    with pytest.raises(RuntimeError, match="stopped"):
+        ui.current_user()
+    assert errors and "does not accept" in errors[0] and repo.users == []
+
+
+def test_admin_requires_verified_email(monkeypatch):
+    claims = {"sub": "9", "iss": "https://example-tenant.eu.auth0.com/", "email": "Boss@Example.org"}
+    ui, _, _ = signed_in(monkeypatch, {**claims, "email_verified": False})
+    assert not ui.current_user().is_admin  # someone signed up with the admin's address but never verified it
+    ui, _, _ = signed_in(monkeypatch, claims)
+    assert not ui.current_user().is_admin  # no verification claim at all
+    ui, _, _ = signed_in(monkeypatch, {**claims, "email_verified": True})
+    assert ui.current_user().is_admin
+
+
+def test_providers_need_complete_settings(monkeypatch):
+    import src.ui.state as ui
+    partial = {**AUTH_SECRETS, "microsoft": {"client_id": "x", "client_secret": "<secret>",
+                                            "server_metadata_url": "https://login.microsoftonline.com/x"}}
+    monkeypatch.setattr(ui, "st", SimpleNamespace(secrets={"auth": partial}))
+    assert ui.configured_providers() == ["google"]  # a placeholder value never enables a provider
+    monkeypatch.setattr(ui, "st", SimpleNamespace(secrets={"auth": {**AUTH_SECRETS, "google": {}}}))
+    assert ui.configured_providers() == [] and ui.auth_enabled() is False  # no provider: no authentication
+
+
+def test_profile_rejects_values_outside_the_lists():
+    from src.models.profile import UserProfile
+    with pytest.raises(ValidationError):
+        UserProfile(sex="<script>")
+    profile = UserProfile(display_name="  Ada   Lovelace ", research_interests=["AI", "AI", " ", "x" * 99])
+    assert profile.display_name == "Ada Lovelace" and profile.research_interests == ["AI", "x" * 40]
+    with pytest.raises(ValidationError):
+        UserProfile(research_interests=[f"topic {n}" for n in range(11)])

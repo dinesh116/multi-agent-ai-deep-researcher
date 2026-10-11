@@ -10,7 +10,7 @@ import streamlit as st
 from src.config import get_settings, mask_secret
 from src.models.research import DEPTH_PRESETS, Depth
 from src.ui.components import card, html, page_header
-from src.ui.state import auth_enabled, current_user, effective_settings, get_repo, preference, provider_settings
+from src.ui.state import auth_enabled, configured_providers, current_user, effective_settings, get_repo, preference, provider_settings
 
 repo, user = get_repo(), current_user()
 env = get_settings()
@@ -77,7 +77,8 @@ st.dataframe(pd.DataFrame([
     {"Setting": "OPENROUTER_API_KEY", "Status": mask_secret(env.openrouter_api_key), "Used for": "LLM planning, extraction, synthesis, Q&A"},
     {"Setting": "TAVILY_API_KEY", "Status": mask_secret(env.tavily_api_key), "Used for": "Live web and news search"},
     {"Setting": "TURSO_AUTH_TOKEN", "Status": mask_secret(env.turso_auth_token), "Used for": "Persistent shared storage"},
-    {"Setting": "Google sign-in ([auth])", "Status": "configured" if auth_enabled() else "not configured",
+    {"Setting": "Sign-in ([auth])", "Status": (", ".join(configured_providers()) or "configured") if auth_enabled()
+     else "not configured",
      "Used for": "Per-user accounts"},
     {"Setting": "CONTACT_EMAIL", "Status": "set" if env.contact_email else "not set", "Used for": "Polite use of OpenAlex/Crossref APIs"},
 ]), hide_index=True, width="stretch")

@@ -86,7 +86,7 @@ with tab_runs:
         st.caption(f"Showing {len(runs)} of {counts['all']} investigations")
 
 LABELS = {"login": "Signed in", "run_started": "Started research", "run_completed": "Research completed",
-          "run_failed": "Research failed", "run_cancelled": "Stopped research", "run_deleted": "Deleted a run", "qa": "Asked a follow-up question",
+          "run_failed": "Research failed", "run_cancelled": "Stopped research", "profile_updated": "Updated profile", "run_deleted": "Deleted a run", "qa": "Asked a follow-up question",
           "export": "Exported a report", "upload": "Uploaded a document", "data_deleted": "Deleted all data"}
 
 with tab_activity:

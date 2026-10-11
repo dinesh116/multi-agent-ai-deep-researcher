@@ -2,7 +2,7 @@
 
 ## Configuration
 
-Deploy this repository with `app.py` as the Streamlit entry point, using the dependency versions in `constraints.txt`. Set `APP_ENV="production"` in the deployment's Secrets. Configure `[auth]` with the public `redirect_uri` ending in `/oauth2callback` and a strong random `cookie_secret`, and `[auth.google]` with the Google client ID, client secret and discovery URL from `.streamlit/secrets.toml.example`. Register exactly the same HTTPS callback with the identity provider. Never commit actual secrets or deploy a developer `.env`.
+Deploy this repository with `app.py` as the Streamlit entry point, using the dependency versions in `constraints.txt`. Set `APP_ENV="production"` in the deployment's Secrets. Configure `[auth]` with the public `redirect_uri` ending in `/oauth2callback` and a strong random `cookie_secret`, and at least one provider section (`[auth.google]`, `[auth.microsoft]`, `[auth.email]`) with its client ID, client secret and discovery URL from `.streamlit/secrets.toml.example`. Register exactly the same HTTPS callback with each identity provider. Static serving (`server.enableStaticServing`) must stay on: the logo and hero image are served from `static/`. Never commit actual secrets or deploy a developer `.env`.
 
 Configure `ADMIN_EMAILS` only for trusted operators. Set provider keys for the live capabilities you intend to demonstrate. If using shared persistent storage, configure both `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`; otherwise the app uses SQLite at `APP_DB_PATH` and the host may discard that file on restart. `APP_ENV` controls authentication policy, not database selection. Missing production authentication stops the app before shared storage is opened.
 
@@ -49,7 +49,7 @@ Temporarily set top-level `AUTH_DIAGNOSTICS = "true"` in deployed Streamlit Secr
 
 - `AUTH_CONFIG`: required authentication field names with true/false status; secret-loading exception class; callback HTTPS, path and local-host checks. Logged once per session/configuration status change. True means a nonempty string passed the existing placeholder check, not that Google accepted the credential.
 - `AUTH_BLOCKED`: production stopped because authentication configuration was missing, incomplete or unreadable. This occurs before Google login; changing Google's allowed URLs alone cannot fix missing deployed Secrets.
-- `AUTH_LOGIN_START`: the app attempted to start Google sign-in.
+- `AUTH_LOGIN_START`: the app attempted to start sign-in (the provider name is logged).
 - `AUTH_LOGIN_FAILED`: synchronous login-start failure, with exception class only.
 - `AUTH_SESSION_ACCEPTED`: a signed-in session with a provider subject reached the app; no identity values are logged.
 - `AUTH_SESSION_INVALID`: the returned session has no usable provider subject.

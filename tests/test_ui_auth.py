@@ -69,7 +69,8 @@ def test_local_mode_is_single_admin_user():
 def test_guest_gets_sign_in_and_demo_only():
     at = app(with_auth=True)
     assert not at.exception
-    assert [b for b in at.button if "Sign in with Google" in b.label]
+    assert at.button(key="hero_demo") and at.button(key="hero_signin")  # minimal public home: demo or sign in
+    assert not [t for t in at.text_area if t.key == "home_q"]  # no research composer for guests
     at.switch_page("app_pages/1_Research_Workspace.py").run()
     assert not at.exception
     assert not at.segmented_control  # no Live / Demo switch for guests
@@ -156,3 +157,66 @@ def test_second_run_is_refused_while_one_is_active(tmp_path):
     at.segmented_control(key="q_mode").set_value("demo").run()
     at.button(key="start_research").click().run()
     assert any("already have an investigation in progress" in e.value for e in at.error)
+
+
+# ------------------------------------------------------------------ redesigned home, sign-in and profile
+ALL_PROVIDERS = {**AUTH_SECRETS,
+                 "microsoft": {"client_id": "ms", "client_secret": "ms-secret",
+                               "server_metadata_url": "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration"},
+                 "email": {"client_id": "a0", "client_secret": "a0-secret",
+                           "server_metadata_url": "https://example-tenant.eu.auth0.com/.well-known/openid-configuration"}}
+
+
+def test_signed_in_landing_shows_team_graph_and_composer():
+    at = app(with_auth=False)  # the local user lands on the signed-in home
+    assert not at.exception
+    assert at.text_area(key="home_q") and at.button(key="home_start")
+    page = " ".join(h.proto.body for h in at.get("html"))
+    assert "Get to know your Agents team" in page and page.count('<article class="dr-tile') == 8
+    assert "How an investigation flows" in page and "run side by side" in page  # parallel branch is shown
+    assert "app/static/hero.jpg" in page
+
+
+def test_landing_starts_research_in_the_background():
+    at = app(with_auth=False)
+    at.text_area(key="home_q").input("What evidence links sleep duration to cognitive performance in adults?")
+    at.button(key="home_start").click().run()
+    assert not at.exception and not at.error
+    from src.ui.state import get_repo
+    [run] = get_repo().list_runs("local", limit=5)
+    assert run.mode == "live" and run.question.startswith("What evidence links sleep")
+    from src.ui.state import get_run_manager
+    assert get_run_manager().wait(run.id, 120)
+
+
+def test_sign_in_page_lists_configured_providers_and_create_account():
+    at = AppTest.from_file(APP, default_timeout=120)
+    at.secrets["auth"] = ALL_PROVIDERS
+    at.run()
+    at.switch_page("app_pages/0_Sign_in.py").run()
+    assert not at.exception
+    labels = [b.label for b in at.button if b.key and b.key.startswith("login_")]
+    assert labels == ["Continue with Google", "Continue with Microsoft", "Continue with email"]
+    at.segmented_control(key="signin_mode").set_value("Create account").run()
+    labels = [b.label for b in at.button if b.key and b.key.startswith("login_")]
+    assert labels == ["Sign up with Google", "Sign up with Microsoft", "Sign up with email"]
+    assert any("never sees your password" in c.value for c in at.caption)
+
+
+def test_profile_is_saved_validated_and_private():
+    at = app(with_auth=False)
+    at.switch_page("app_pages/9_Profile.py").run()
+    assert not at.exception
+    at.text_input[0].input("Ada")
+    at.selectbox[0].set_value("25–34")
+    at.selectbox[3].set_value("Technology and software")
+    at.multiselect[0].set_value(["Artificial intelligence", "Quantum sensing"])
+    at.button[[b.label for b in at.button].index("Save profile")].click().run()
+    assert not at.exception and at.success
+    from src.ui.state import get_repo
+    profile = get_repo().get_profile("local")
+    assert profile.display_name == "Ada" and profile.age_range == "25–34"
+    assert profile.industry == "Technology and software"
+    assert profile.research_interests == ["Artificial intelligence", "Quantum sensing"]
+    get_repo().delete_user_data("local")
+    assert get_repo().get_profile("local").display_name == ""
