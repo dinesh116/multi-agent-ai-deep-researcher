@@ -33,7 +33,7 @@ pytest                                # offline; no API keys needed
 
 ## Deployment security
 
-`APP_ENV` defaults to `production`: Google sign-in must be fully configured or the app stops before opening
+`APP_ENV` defaults to `production`: sign-in (`[auth]` plus at least one provider) must be fully configured or the app stops before opening
 its shared repository. For private local development without accounts, explicitly set `APP_ENV=local`
 (the `.env.example` does this). Never use local mode for a public deployment. Set `APP_ENV="production"`
 in deployed Streamlit Secrets; do not deploy your local `.env`.
@@ -47,15 +47,26 @@ these controls reduce prompt-injection risk but do not guarantee factual accurac
 
 ## Accounts, privacy and storage
 
-**Accounts (required for public deployment).** With Google sign-in configured, every research run, uploaded document, follow-up Q&A and
+**Accounts (required for public deployment).** With sign-in configured (Google, Microsoft and/or email), every research run, uploaded document, follow-up Q&A and
 activity entry belongs to the signed-in user, and every database query is filtered by that user. Users can't list,
 open, delete or export each other's data, even by guessing a run id. Visitors who aren't signed in are **guests**:
 they can run the synthetic demo (three preselected questions), which is visible only in their browser session and
 deleted after 24 hours, but not live research, uploads or settings. **Research library → My activity** shows sign-ins, runs, Q&A, exports and uploads,
 and **Delete my data** removes everything a user owns. Admins (`ADMIN_EMAILS`) manage models and providers and see
-usage counts per user, never content. Without sign-in configured, only explicit `APP_ENV=local` allows a single local administrator. Production stops.
+usage counts per user, never content; admin rights also require the provider to report the email as verified.
+Without sign-in configured, only explicit `APP_ENV=local` allows a single local administrator. Production stops.
 
-**Set up Google sign-in (about 10 minutes):**
+**Sign-in options.** The Sign in page shows one button per provider configured in Secrets (see
+`.streamlit/secrets.toml.example`): **Google**, **Microsoft** and **email**. "Email" is a hosted OpenID Connect
+service with email sign-up, verification and password reset (for example Auth0), so **Create account** works without
+the app ever handling passwords. An account is created the first time someone signs in. Identities are tied to the
+issuer that signed them (Google ids unchanged; other providers prefixed), and an unknown issuer is rejected.
+
+**Profiles.** **Update profile** stores optional details (display name, age range, sex, education, industry, role,
+research interests) for the signed-in user only. They are never shown to admins or sent to providers or the LLM, and
+**Delete my data** removes them together with the account record.
+
+**Set up Google sign-in (about 10 minutes; Microsoft and email providers are configured the same way):**
 1. Google Cloud Console → *APIs & Services* → *OAuth consent screen*: create one (External, your email as a test user).
 2. *Credentials* → *Create credentials* → *OAuth client ID* → *Web application*. Add authorised redirect URIs
    `http://localhost:8501/oauth2callback` and `https://<your-app>.streamlit.app/oauth2callback`.
@@ -109,15 +120,25 @@ sources and your uploads, and says so in the run log.
 
 ## The pages
 
-The interface follows the "Synthora" wireframe: violet accent, white cards, DM Sans / Manrope, a sidebar with
-**New research**, recent research and the profile/sign-in block.
+The interface is a frosted-glass design with high-contrast **dark and light themes** (Sora headings, DM Sans body,
+cyan and violet accents). The app follows the device setting; switch in the menu (⋮ → Settings → Theme). Layouts
+adapt to desktop, tablet and phone, and animations stop for visitors who prefer reduced motion. The Deep Research Agent
+robot is the logo; the lab scene appears on the home pages. The left panel holds the menu, **New research**, runs
+**In progress**, recent research and the profile block.
 
-1. **Welcome**: hero, "Try Demo" (opens the workspace in demo mode), Google sign-in, how an investigation works.
+1. **Home**: visitors see a minimal introduction with **Try Demo** or **Sign in**. Signed-in users get their research
+   home: a question box that starts a run directly, **Get to know your Agents team** (animated tiles for the eight
+   agents), **How an investigation flows** (the LangGraph workflow, showing the parallel steps and the bounded
+   follow-up loop) and recent investigations.
+   - **Sign in**: Sign in / Create account with the configured providers, or try the demo without an account.
+   - **Update profile**: optional personal and research-interest details (signed-in users).
 2. **Research workspace**: Live/Demo switch (guests: demo only); demo shows the three question cards, live shows a
    free-text question with suggestions; depth cards (Quick/Standard/Deep); advanced settings (context, objectives,
    follow-up rounds, source types, dates, LLM, documents); recent investigations.
-3. **Agents in action**: live agent list with status, activity timeline and progress bar while a run executes; for a
-   past run, the per-agent audit trail, budget usage, stopping decision, full event log and search activity.
+3. **Agents in action**: live agent list with status, activity timeline and progress bar while a run is queued or
+   executing, with **Stop & write report**; for a past run, the per-agent audit trail, budget usage, stopping
+   decision, full event log and search activity. Research runs in a background job runner, so you can leave the page,
+   refresh or switch devices and reattach from **In progress** in the sidebar.
 4. **Research results**: one investigation in tabs: *Overview* (executive summary, key findings, at a glance),
    *Evidence* (filterable sources, assessments, passages, claims), *Analysis* (evidence matrix, contradictions,
    agreement vs uncertainty, gaps, coverage), *Insights* (observed / inferred / speculative), *Charts* (extracted values and provenance), *Full report* (cited
@@ -129,7 +150,15 @@ The interface follows the "Synthora" wireframe: violet accent, white cards, DM S
 
 ```
 START → Planner → Retriever → Source Evaluation → Critical Analysis → Gap & Follow-up ─┬─ follow_up → Retriever (loop, bounded)
-                                                                                      └─ synthesize → Insights → Data Visualization → Report → END
+                                                                                      └─ synthesize ─┬─ Insights ────────────┬─ Report → END
+                                                                                                     └─ Data Visualization ──┘
+```
+
+Insights and Data Visualization run in parallel (neither needs the other's output) and the Report waits for both.
+Inside steps, the Retriever searches all providers at once and the Critical Analyst extracts claims from each source
+in parallel.
+
+```
 ```
 
 The follow-up decision is deterministic. Research stops at the iteration limit, when the search, source or time
@@ -180,14 +209,16 @@ Q&A citation validation, and prompt-injection handling.
 - Retrieval is keyword-based (BM25); paraphrased questions may retrieve less well than with embeddings.
 - Full-text fetching is limited to 6 pages per round and skips non-HTML content.
 - Scanned PDFs need OCR (not included). Model cost estimates require configured input/output prices; they are not billing invoices.
-- Public deployments require configured Google sign-in; explicit local mode uses one shared local administrator.
+- Public deployments require configured sign-in; explicit local mode uses one shared local administrator.
 
 ## Troubleshooting
 
 - **"Web search unavailable"**: set `TAVILY_API_KEY` in `.env` and restart, or rely on academic sources.
 - **Live runs return few sources**: widen the date range, enable more providers, or choose *Deep*.
 - **LLM output rejected** (in the progress log): the app fell back to deterministic logic. Try a stronger model on the Settings page.
-- **A run is stuck as "running"** after closing the app: it is marked failed on next start.
+- **"You already have an investigation in progress"**: each user runs one at a time by default
+  (`MAX_ACTIVE_RUNS_PER_USER`). Open it from **In progress** in the sidebar, stop it, or wait for it to finish.
+- **A run is stuck as "running"** after the app stopped: running investigations send a heartbeat every `RUN_HEARTBEAT_SECONDS`; one without a heartbeat for `RUN_STALE_AFTER_SECONDS` is marked failed when the app next starts. Runs that are still alive on another instance are left alone.
 - **Start fresh**: delete `data/research.db`.
 
 ## Recommended next steps
@@ -207,7 +238,7 @@ The **Critical Analysis Agent** rejects model paraphrases that introduce numbers
 
 Every actual LLM request, including a retry, consumes the per-run call allowance. Token reservations are atomic across parallel claim extraction calls. Before a request, a conservative allowance based on prompt UTF-8 bytes, response limit and framing is reserved. Provider-reported usage replaces that allowance on success; failed requests and responses without usage retain an explicitly **unreported** allowance because their billing is unknown. Conservative reservations can stop a run before the nominal token limit. The progress page separates observed, unreported and in-flight tokens.
 
-Set `LLM_INPUT_USD_PER_MILLION` and `LLM_OUTPUT_USD_PER_MILLION` to the selected model's rates to enable a USD estimate. Update these when changing models; zero means unknown, not free. Estimates are partial if usage is missing. LLM request timeouts and retry waits use the remaining run time. Already-running search/fetch requests have their own HTTP timeout, so the run time budget is not a hard cancellation of all network work. No per-user quotas or global concurrency limits have been added.
+Set `LLM_INPUT_USD_PER_MILLION` and `LLM_OUTPUT_USD_PER_MILLION` to the selected model's rates to enable a USD estimate. Update these when changing models; zero means unknown, not free. Estimates are partial if usage is missing. LLM request timeouts and retry waits use the remaining run time. Already-running search/fetch requests have their own HTTP timeout, so the run time budget is not a hard cancellation of all network work. Concurrency is bounded: each app process executes at most `MAX_CONCURRENT_RUNS` investigations at once, each user may have `MAX_ACTIVE_RUNS_PER_USER` queued or running, and new runs are refused once `MAX_QUEUED_RUNS` are active overall. There are no token or cost quotas per user.
 
 ## CI and deployment verification
 

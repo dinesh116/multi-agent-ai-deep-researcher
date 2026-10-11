@@ -58,3 +58,27 @@ class RunBundle(BaseModel):
 
     def passages_for(self, source_id: str) -> list[Passage]:
         return [p for p in self.passages if p.source_id == source_id]
+
+
+ACTIVE_STATUSES = ("queued", "running")
+
+
+class RunProgress(BaseModel):
+    """Live view of a run, read from the database so any session can (re)attach to it."""
+
+    run_id: str
+    question: str
+    status: str
+    mode: str
+    depth: str = ""
+    created_at: datetime
+    heartbeat_at: datetime | None = None
+    cancel_requested: bool = False
+    progress: dict[str, Any] = Field(default_factory=dict)  # see services.run_events.ProgressTracker.snapshot
+    events: list[AgentEvent] = Field(default_factory=list)  # only events after the requested sequence number
+    last_seq: int = -1  # highest event sequence number returned; pass back as `after_seq` to page through
+    errors: list[str] = Field(default_factory=list)
+
+    @property
+    def active(self) -> bool:
+        return self.status in ACTIVE_STATUSES

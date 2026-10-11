@@ -3,7 +3,8 @@ import pandas as pd
 import streamlit as st
 
 from src.ui.components import DEPTH_LABELS, ago, card, eyebrow, mode_tag, status_tag
-from src.ui.state import current_user, get_repo, new_research, open_run, selected_run_id
+from src.models.run import ACTIVE_STATUSES
+from src.ui.state import current_user, get_repo, new_research, open_progress, open_run, selected_run_id
 
 repo, user = get_repo(), current_user()
 head, action = st.columns([4, 1], vertical_alignment="center")
@@ -29,11 +30,14 @@ with tab_runs:
             search = s1.text_input("Search investigations", placeholder="⌕  Search investigations…",
                                    label_visibility="collapsed")
             sort = s2.selectbox("Sort", ["Recently updated", "Oldest first", "A–Z"], label_visibility="collapsed")
-            counts = {"all": len(runs), **{s: sum(r.status == s for r in runs) for s in ("completed", "running", "failed")}}
-            names = {"all": "All research", "completed": "Completed", "running": "In progress", "failed": "Failed"}
+            groups = {"completed": ("completed",), "running": ACTIVE_STATUSES, "cancelled": ("cancelled",),
+                      "failed": ("failed",)}
+            counts = {"all": len(runs), **{g: sum(r.status in members for r in runs) for g, members in groups.items()}}
+            names = {"all": "All research", "completed": "Completed", "running": "In progress", "cancelled": "Stopped",
+                     "failed": "Failed"}
             status_filter = st.segmented_control("Status", list(names), default="all", label_visibility="collapsed",
                                                  format_func=lambda s: f"{names[s]} · {counts[s]}") or "all"
-        runs = [r for r in runs if (status_filter == "all" or r.status == status_filter)
+        runs = [r for r in runs if (status_filter == "all" or r.status in groups[status_filter])
                 and (not search or search.lower() in r.question.lower())]
         if sort == "Oldest first":
             runs = runs[::-1]
@@ -57,14 +61,22 @@ with tab_runs:
                 c[3].markdown(f'<div class="ds-cell">{run.counts.get("sources", 0)}</div>', unsafe_allow_html=True)
                 c[4].markdown(f'<div class="ds-cell">{ago(run.created_at)}</div>', unsafe_allow_html=True)
                 b1, b2 = c[5].columns([1.5, 1])
-                if b1.button("Open", key=f"open_{run.id}", disabled=run.status == "running"):
-                    open_run(run.id)
+                live = run.status in ACTIVE_STATUSES
+                if b1.button("Follow" if live else "Open", key=f"open_{run.id}"):
+                    if live:
+                        open_progress(run.id)
+                    else:
+                        open_run(run.id)
                 with b2.popover("", icon=":material/more_horiz:"):
                     if run.summary:
                         st.markdown("**Summary of findings**")
                         st.markdown(run.summary[:1200])
-                    st.write("Delete this run and all of its stored sources, evidence, report and Q&A?")
-                    if st.button("Delete", key=f"del_{run.id}", type="primary"):
+                    if live:
+                        st.write("This investigation is still in progress. Stop it from its live view before "
+                                 "deleting it.")
+                    else:
+                        st.write("Delete this run and all of its stored sources, evidence, report and Q&A?")
+                    if st.button("Delete", key=f"del_{run.id}", type="primary", disabled=live):
                         if repo.delete_run(run.id, user.id):
                             repo.log_activity(user.id, "run_deleted", run.id, {"question": run.question[:200]})
                         if current == run.id:
@@ -74,7 +86,7 @@ with tab_runs:
         st.caption(f"Showing {len(runs)} of {counts['all']} investigations")
 
 LABELS = {"login": "Signed in", "run_started": "Started research", "run_completed": "Research completed",
-          "run_failed": "Research failed", "run_deleted": "Deleted a run", "qa": "Asked a follow-up question",
+          "run_failed": "Research failed", "run_cancelled": "Stopped research", "profile_updated": "Updated profile", "run_deleted": "Deleted a run", "qa": "Asked a follow-up question",
           "export": "Exported a report", "upload": "Uploaded a document", "data_deleted": "Deleted all data"}
 
 with tab_activity:

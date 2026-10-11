@@ -34,9 +34,20 @@ class RunBudget:
         if reason not in self.usage.exhausted:
             self.usage.exhausted.append(reason)
 
+    def cancel(self) -> None:
+        """Stop gathering: no further searches or LLM calls. The workflow then reports what it already has."""
+        with self._lock:
+            self._mark("cancelled")
+
+    @property
+    def cancelled(self) -> bool:
+        return "cancelled" in self.usage.exhausted
+
     def try_search(self) -> bool:
         """Reserve one search. Returns False (and records why) when a limit is reached."""
         with self._lock:
+            if self.cancelled:
+                return False
             if self.out_of_time():
                 self._mark("time")
                 return False
@@ -65,6 +76,8 @@ class RunBudget:
 
     def try_llm(self) -> bool:
         with self._lock:
+            if self.cancelled:
+                return False
             if self.out_of_time():
                 self._mark("time")
                 return False
@@ -80,6 +93,8 @@ class RunBudget:
     def reserve_llm_attempt(self, tokens: int) -> bool:
         """Atomically reserve a conservative token bound for one actual API request."""
         with self._lock:
+            if self.cancelled:
+                return False
             if self.out_of_time():
                 self._mark("time")
                 return False

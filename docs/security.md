@@ -2,9 +2,14 @@
 
 ## Authentication
 
-`APP_ENV` defaults to `production`. Configure complete Google sign-in settings under `[auth]` and
-`[auth.google]` in Streamlit Secrets. Missing, unreadable, incomplete or placeholder authentication settings
-stop the UI before it opens shared research storage. Logged-in sessions must have a provider subject ID.
+`APP_ENV` defaults to `production`. Configure `[auth]` (redirect URI, cookie secret) and at least one complete
+provider section (`[auth.google]`, `[auth.microsoft]`, `[auth.email]`) in Streamlit Secrets. Missing, unreadable,
+incomplete or placeholder authentication settings stop the UI before it opens shared research storage. Logged-in
+sessions must have a provider subject ID and an issuer that matches a configured provider (otherwise the session is
+rejected). Account ids are namespaced by provider (Google keeps its raw subject), so two issuers can never share an
+account. `ADMIN_EMAILS` grants admin rights only when the provider marks the email as verified, because email
+sign-up would otherwise let anyone register an administrator's address. Passwords for email accounts are handled by
+the hosted provider; the app never receives them.
 
 For private development only, set `APP_ENV=local` in your local `.env`. This explicitly enables the shared
 local administrator when sign-in is unavailable. Never deploy that `.env` or use local mode on a public server.
@@ -57,7 +62,7 @@ Temporarily set top-level `AUTH_DIAGNOSTICS = "true"` in deployed Streamlit Secr
 
 - `AUTH_CONFIG`: required authentication field names with true/false status; secret-loading exception class; callback HTTPS, path and local-host checks. Logged once per session/configuration status change. True means a nonempty string passed the existing placeholder check, not that Google accepted the credential.
 - `AUTH_BLOCKED`: production stopped because authentication configuration was missing, incomplete or unreadable. This occurs before Google login; changing Google's allowed URLs alone cannot fix missing deployed Secrets.
-- `AUTH_LOGIN_START`: the app attempted to start Google sign-in.
+- `AUTH_LOGIN_START`: the app attempted to start sign-in (the provider name is logged).
 - `AUTH_LOGIN_FAILED`: synchronous login-start failure, with exception class only.
 - `AUTH_SESSION_ACCEPTED`: a signed-in session with a provider subject reached the app; no identity values are logged.
 - `AUTH_SESSION_INVALID`: the returned session has no usable provider subject.

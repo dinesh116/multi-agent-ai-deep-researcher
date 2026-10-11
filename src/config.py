@@ -41,6 +41,12 @@ class Settings:
     output_usd_per_million: float = 0.0
     app_env: str = "production"  # local mode must be explicitly enabled; deployments require authentication
     admin_emails: tuple[str, ...] = ()  # signed-in users who may change app-wide settings
+    run_heartbeat_seconds: float = 15.0  # how often a running investigation proves it is alive
+    run_stale_after_seconds: float = 120.0  # a running row without a heartbeat for this long is reaped as failed
+    run_event_flush_seconds: float = 1.0  # batch window for persisting progress events
+    max_concurrent_runs: int = 2  # investigations executing at once in this app process
+    max_active_runs_per_user: int = 1  # queued + running investigations per user
+    max_queued_runs: int = 10  # queued + running investigations across all users before new ones are refused
 
     @property
     def uses_turso(self) -> bool:
@@ -72,6 +78,7 @@ def get_settings() -> Settings:
     if app_env not in {"local", "production"}:
         raise ValueError("APP_ENV must be local or production.")
     db = Path(_env("APP_DB_PATH", "data/research.db"))
+    heartbeat = max(1.0, float(_env("RUN_HEARTBEAT_SECONDS", "15")))
     return Settings(
         openrouter_api_key=_env("OPENROUTER_API_KEY"),
         openrouter_model=_env("OPENROUTER_MODEL", "openai/gpt-4o-mini"),
@@ -87,5 +94,12 @@ def get_settings() -> Settings:
         input_usd_per_million=max(0.0, float(_env("LLM_INPUT_USD_PER_MILLION", "0"))),
         output_usd_per_million=max(0.0, float(_env("LLM_OUTPUT_USD_PER_MILLION", "0"))),
         app_env=app_env,
+        run_heartbeat_seconds=heartbeat,
+        # at least three missed heartbeats before a run is considered dead
+        run_stale_after_seconds=max(30.0, 3 * heartbeat, float(_env("RUN_STALE_AFTER_SECONDS", "120"))),
+        run_event_flush_seconds=max(0.1, float(_env("RUN_EVENT_FLUSH_SECONDS", "1"))),
+        max_concurrent_runs=max(1, int(_env("MAX_CONCURRENT_RUNS", "2"))),
+        max_active_runs_per_user=max(1, int(_env("MAX_ACTIVE_RUNS_PER_USER", "1"))),
+        max_queued_runs=max(1, int(_env("MAX_QUEUED_RUNS", "10"))),
         admin_emails=tuple(e.strip().lower() for e in (_env("ADMIN_EMAILS", "") or "").split(",") if e.strip()),
     )
