@@ -7,7 +7,7 @@ import streamlit as st
 from src.models.run import ACTIVE_STATUSES
 from src.reporting.render import to_html, to_markdown, to_pdf
 from src.ui.components import DEPTH_LABELS, card, demo_banner, eyebrow, html, strip_citations
-from src.ui.state import current_user, effective_settings, get_repo, preference, require_run
+from src.ui.state import current_user, effective_settings, get_repo, preference, require_run, rerun_button
 from src.ui.views import analysis, evidence, insights, qa, visualizations, report as report_view
 
 bundle = require_run()
@@ -30,8 +30,17 @@ head.markdown('<div class="ds-report-head">' + eyebrow(f"Research report · {sum
               + f'<div class="ds-meta"><span>✧ {DEPTH_LABELS.get(summary.depth, "Standard")} research</span>'
               + f"<span>{len(bundle.sources)} sources</span><span>{'Demo dataset' if demo else 'Live sources'}</span>"
               + f"<span>Updated {done:%d %b %Y %H:%M}</span></div></div>", unsafe_allow_html=True)
-if report is None:
-    st.error("This run has no report (it may have failed). Its evidence can still be inspected below.")
+if summary.status == "failed":
+    with st.container(border=True):
+        note, again = st.columns([4, 1], vertical_alignment="center")
+        note.error("This investigation did not finish" + (", so its report is incomplete" if report else "")
+                   + ". Re-run it to start again with the same question and settings.", icon=":material/error:")
+        with again:
+            rerun_button(summary.id, key="results_rerun", type="primary", width="stretch")
+        for error in bundle.errors:
+            st.caption(error)
+elif report is None:
+    st.error("This run has no report. Its evidence can still be inspected below.")
     for error in bundle.errors:
         st.error(error)
 

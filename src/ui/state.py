@@ -19,10 +19,12 @@ import streamlit as st
 
 from html import escape
 
+from pydantic import ValidationError
+
 from src.config import APP_NAME, Settings, get_settings
 from src.database.repository import LOCAL_OWNER, Repository
 from src.models.run import ACTIVE_STATUSES, RunBundle
-from src.services.jobs import RunManager
+from src.services.jobs import RunManager, RunRejected
 from src.search.registry import ProviderSettings
 
 LOGO = "assets/logo.png"  # round crop of the Deep Research Agent robot
@@ -275,6 +277,24 @@ def new_research() -> None:
 def open_run(run_id: str) -> None:
     select_run(run_id)
     st.switch_page("app_pages/3_Research_Results.py")
+
+
+def rerun_button(run_id: str, key: str, **kwargs) -> None:
+    """A Re-run button for a failed run: starts a new run with the same request and follows it live."""
+    if not st.button("Re-run", icon=":material/replay:", key=key,
+                     help="Start this investigation again with the same question and settings", **kwargs):
+        return
+    try:
+        with st.spinner("Starting the investigation again…"):
+            new_run_id = get_run_manager().rerun(run_id, current_user().id, effective_settings(), provider_settings())
+    except ValidationError as exc:  # the stored question no longer passes the current question checks
+        st.error("; ".join(e["msg"].removeprefix("Value error, ") for e in exc.errors()))
+        return
+    except (RunRejected, PermissionError, ValueError) as exc:  # limits, guest rules, or the LLM question check
+        st.error(str(exc))
+        return
+    st.session_state.pop("_bundle_cache", None)
+    open_progress(new_run_id)
 
 
 def initials(name: str) -> str:

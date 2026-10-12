@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from src.ingestion.extract import ALLOWED_UPLOADS, ExtractionError, extract_upload
 from src.models.research import (DEMO_QUESTIONS, DEPTH_PRESETS, Depth, ResearchMode, ResearchRequest,
                                  SourcePreference)
-from src.models.research import QUESTION_EVIDENCE_NOTICE, question_guidance
+from src.models.research import QUESTION_EVIDENCE_NOTICE, question_guidance, question_problem
 from src.ui.components import DEPTH_LABELS, ago, card, eyebrow, html, mode_tag, status_tag
 from src.models.run import ACTIVE_STATUSES
 from src.services.jobs import RunRejected
@@ -80,7 +80,9 @@ with card("composer"):
         question = st.text_area("Research question", key="q_text", height=90, max_chars=600,
                                 placeholder="e.g. How might AI reshape early-stage drug discovery over the next decade?")
         st.caption(QUESTION_EVIDENCE_NOTICE)
-        if guidance := question_guidance(question or ""):
+        if problem := question_problem(question or ""):
+            st.warning(problem, icon=":material/edit_note:")
+        elif guidance := question_guidance(question or ""):
             st.info(guidance)
         html('<div class="ds-muted" style="margin:2px 0 6px">Need a starting point?</div>')
         for i, (col, example) in enumerate(zip(st.columns(3), DEMO_QUESTIONS)):
@@ -172,10 +174,14 @@ with card("composer"):
                 document_ids=selected_docs, parent_run_id=st.session_state.get("parent_run_id"))
         except ValidationError as exc:
             for error in exc.errors():
-                st.error(error["msg"].removeprefix("Value error, "))
+                if error["loc"] == ("question",) and not demo:  # already shown as a warning under the question
+                    st.error("Research not started. Please correct the research question above and try again.")
+                else:
+                    st.error(error["msg"].removeprefix("Value error, "))
             st.stop()
         try:
-            run_id = get_run_manager().submit(request, user.id, settings, provider_settings())
+            with st.spinner("Checking your question…"):  # live runs with an LLM get a sense check first
+                run_id = get_run_manager().submit(request, user.id, settings, provider_settings())
         except RunRejected as exc:
             st.error(str(exc), icon=":material/hourglass_top:")
             st.stop()

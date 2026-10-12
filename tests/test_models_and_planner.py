@@ -126,3 +126,38 @@ def test_backend_revalidates_mutated_question():
     request.question = "test test test"
     with pytest.raises(ValidationError, match="research topic"):
         validate_request(request, "local")
+
+
+@pytest.mark.parametrize("question,message", [
+    ("asdf qwer zxcv", "random typing"),
+    ("jkhgd lkjhs bnmvc", "random typing"),
+    ("How do I fdjskl the wkdjfh market", "random typing"),
+    ("aaaaa bbbbb ccccc", "random typing"),
+    ("Lorem ipsum dolor sit amet", "placeholder text"),
+    ("what is the this that", "needs a subject"),
+])
+def test_question_rejects_gibberish(question, message):
+    with pytest.raises(ValidationError, match=message):
+        ResearchRequest(question=question)
+
+
+@pytest.mark.parametrize("question", [
+    "Strengths and weaknesses of LLMs for legal research",
+    "Kazakhstan and Uzbekistan pizza jazz rhythm economy",
+    "Effect of lockdown on Ukraine and Qatar breakthrough tech",
+    "What is the QWERTY keyboard layout history",
+    "Awkward frenzy around oxygen supply chains in HTTPS era",
+])
+def test_unusual_real_words_are_not_gibberish(question):
+    from src.models.research import question_guidance, question_problem
+    assert ResearchRequest(question=question).question == question
+    assert not question_guidance(question) and not question_problem(question)
+
+
+def test_any_gibberish_word_rejects_the_question():
+    from src.models.research import question_problem
+    question = "How does asdf affect stock markets in Europe"
+    with pytest.raises(ValidationError, match="enter your question again"):
+        ResearchRequest(question=question)
+    assert "“asdf”" in question_problem(question)
+    assert question_problem("") is None and question_problem(QUESTION) is None

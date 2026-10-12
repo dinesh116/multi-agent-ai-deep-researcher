@@ -18,7 +18,7 @@ from src.models.profile import UserProfile
 from src.models.evidence import (AgentEvent, AgentStatus, Claim, Contradiction, EvidenceLink, Insight, MatrixRow,
                                  Passage, Report, ResearchGap, Source, SourceAssessment)
 from src.models.research import BudgetUsage, ResearchPlan, ResearchRequest, new_id, now, utc_now
-from src.models.run import ACTIVE_STATUSES, RunBundle, RunProgress, RunSummary
+from src.models.run import ACTIVE_STATUSES, INTERRUPTED_ERROR, RunBundle, RunProgress, RunSummary
 from src.models.visualization import EvidenceChart
 
 SCHEMA = Path(__file__).with_name("schema.sql")
@@ -355,7 +355,7 @@ class Repository:
             ids = [r["id"] for r in db.rows(f"SELECT id FROM runs WHERE {stale}", (cutoff,))]
             if ids:
                 db.execute(f"UPDATE runs SET status = 'failed', completed_at = ?, errors = ? WHERE {stale}",
-                           (now().isoformat(), json.dumps(["The app stopped before this run finished."]), cutoff))
+                           (now().isoformat(), json.dumps([INTERRUPTED_ERROR]), cutoff))
         return ids
 
     def purge_guest_data(self, older_than_hours: int = 24) -> int:

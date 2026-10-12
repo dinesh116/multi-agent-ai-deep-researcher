@@ -182,6 +182,13 @@ flowchart LR
 | 8 | Report Builder | everything | report and citation checks | Optional (prose rewrite; citation markers and numbers validated) |
 | — | Research Q&A | stored run bundle | answer with citations | Optional (cited ids must be in the retrieved set) |
 
+**Report structure.** The Report Builder follows a fixed flow: *Executive summary* (objective and bottom line
+first), *Introduction* (objective, why it matters, scope and approach as tables), *Analysis* (by subquestion),
+*Evidence overview* (claim matrix), *Findings* (key-findings table, trends, implications, risks), *Recommendations*
+(numbered actions, each tied to its evidence), *Conclusion*, then *Limitations*, *Data behind the charts* and
+*Sources*. Every section is built deterministically from the evidence; the optional LLM only rewrites the summary
+and analysis in short, plain, neutral prose, and its rewrite is rejected if citations or numbers change.
+
 ## 7. Evidence model and integrity
 
 - **Deduplication:** the same canonical URL (tracking parameters removed), DOI or document id, content hash, or a
@@ -242,11 +249,16 @@ stateDiagram-v2
   the budget is cancelled: no further searches or LLM calls, routing goes to synthesis, and the remaining agents
   write a partial report; the run ends `cancelled`. Another instance's stop request reaches the worker on its next
   progress write.
+- **Interrupted runs fail.** A run interrupted by a crash of the app, its process or the computer stops
+  heartbeating and is reaped as `failed` (at start-up and by the maintenance thread). A graceful app shutdown
+  interrupts its budget instead of cancelling it, so those runs also end `failed`, not "stopped by you"; runs still
+  waiting in the queue are failed at once. Closing the browser does not interrupt a run: it keeps running on the
+  server. Every interrupted run records the same error and can be started again with **Re-run** (library, run log or
+  results page), which submits the stored request as a new run; the failed run stays in the history.
 - **Deletion safety.** Active runs cannot be deleted from the library. "Delete my data" stops them first, and a run
   deleted mid-execution is not re-created by its final save.
 
-The design and remaining phases (checkpoints, resume, plan review) are in
-[plans/run-execution.md](plans/run-execution.md).
+The design history is in [plans/run-execution.md](plans/run-execution.md).
 
 ## 9. Budgets and LLM use
 
@@ -321,7 +333,7 @@ failures are isolated from research execution. Details are in [observability.md]
 |---|---|---|
 | Deterministic routing and validation; LLM only for language | Reproducible, testable behaviour; a working app without any API key | Heuristic analysis is less nuanced than an LLM |
 | LangGraph for orchestration | Typed state, reducers, conditional edges and parallel branches; a path to checkpoints | Framework dependency; agents themselves stay framework-free (`agent.run(state, ctx)`) |
-| In-process job runner instead of a worker service | Streamlit Community Cloud runs a single process with no separate workers | Runs stop if the process stops (they are reaped, not resumed yet) |
+| In-process job runner instead of a worker service | Streamlit Community Cloud runs a single process with no separate workers | Runs stop if the process stops (they are marked failed and can be re-run from the start) |
 | All progress in the database | Any session or device can reattach; limits work across instances | More writes; batched to keep Turso traffic low |
 | BM25 rather than embeddings | Exact-term questions, offline, deterministic, no vector store | Weaker on paraphrase |
 | Turso embedded replica | Persistent, shared storage on a free tier with fast local reads | Writes pay network latency to the database region |
@@ -330,8 +342,7 @@ failures are isolated from research execution. Details are in [observability.md]
 
 ## 15. Constraints and future work
 
-- Interrupted runs are marked failed rather than resumed. Planned: a database-backed LangGraph checkpointer and a
-  **Resume** action, then optional plan review before research starts.
+- Interrupted runs are marked failed and re-run from the start; they are not resumed from where they stopped.
 - Admission limits are best-effort across instances; there are no per-user token or cost quotas.
 - Academic sources are mostly abstracts; scanned PDFs need OCR; charts come only from uploaded CSV rows.
 - Hosted end-to-end verification (sign-in providers, persistence, tracing) is tracked in

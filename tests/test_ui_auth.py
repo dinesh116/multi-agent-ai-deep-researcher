@@ -16,6 +16,7 @@ def isolated_db(tmp_path, monkeypatch):
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("APP_DB_PATH", str(tmp_path / "ui.db"))
     monkeypatch.delenv("TURSO_DATABASE_URL", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")  # never call a real LLM (e.g. the submit-time question check)
     get_settings.cache_clear()
     import streamlit as st
     from streamlit import config
@@ -261,7 +262,8 @@ def test_meaningless_question_is_rejected_in_both_composers(workspace):
         at.text_area(key="home_q").set_value("test test test").run()
         at.button(key="home_start").click().run()
     assert not at.exception
-    assert any("research topic" in error.value for error in at.error)
+    alerts = [a.value for a in [*at.error, *at.warning]]
+    assert at.error and any("research topic" in alert for alert in alerts)
     from src.ui.state import get_repo
     assert not get_repo().list_runs("local")
 
@@ -277,3 +279,55 @@ def test_broad_question_shows_advice_in_both_composers(workspace):
     assert not at.exception and not at.error
     assert any("may be too broad" in info.value for info in at.info)
     assert any("forecasts are uncertain" in caption.value for caption in at.caption)
+
+
+@pytest.mark.parametrize("workspace", [False, True])
+def test_gibberish_question_is_rejected_in_both_composers(workspace):
+    at = app(with_auth=False)
+    if workspace:
+        at.switch_page("app_pages/1_Research_Workspace.py").run()
+        if at.segmented_control:
+            at.segmented_control(key="q_mode").set_value("live").run()
+        at.text_area(key="q_text").set_value("asdf qwer zxcv").run()
+        at.button(key="start_research").click().run()
+    else:
+        at.text_area(key="home_q").set_value("asdf qwer zxcv").run()
+        at.button(key="home_start").click().run()
+    assert not at.exception
+    alerts = [a.value for a in [*at.error, *at.warning]]
+    assert at.error and any("random typing" in alert for alert in alerts)
+    from src.ui.state import get_repo
+    assert not get_repo().list_runs("local")
+
+
+@pytest.mark.parametrize("workspace", [False, True])
+def test_partly_gibberish_question_warns_and_does_not_start(workspace):
+    at = app(with_auth=False)
+    if workspace:
+        at.switch_page("app_pages/1_Research_Workspace.py").run()
+        if at.segmented_control:
+            at.segmented_control(key="q_mode").set_value("live").run()
+    at.text_area(key="q_text" if workspace else "home_q").set_value("How does asdf affect stock markets").run()
+    assert not at.exception and not at.error
+    assert any("enter your question again" in warning.value for warning in at.warning)  # live alert while typing
+    at.button(key="start_research" if workspace else "home_start").click().run()
+    assert not at.exception and at.error
+    from src.ui.state import get_repo
+    assert not get_repo().list_runs("local")
+
+
+def test_failed_run_can_be_rerun_from_the_library():
+    from src.models.research import DEMO_QUESTIONS, ResearchRequest
+    from src.models.run import INTERRUPTED_ERROR
+    from src.ui.state import get_repo
+    at = app(with_auth=False)
+    repo = get_repo()
+    repo.create_run("run_interrupted", ResearchRequest(question=DEMO_QUESTIONS[0]), "local", worker_id="dead-process")
+    repo.fail_run("run_interrupted", "local", INTERRUPTED_ERROR)
+    at.switch_page("app_pages/7_Research_History.py").run()
+    assert not at.exception
+    at.button(key="rerun_run_interrupted").click().run()
+    assert not at.exception and not at.error
+    runs = repo.list_runs("local")
+    assert len(runs) == 2 and {r.question for r in runs} == {DEMO_QUESTIONS[0]}
+    assert next(r for r in runs if r.id == "run_interrupted").status == "failed"  # kept in the history

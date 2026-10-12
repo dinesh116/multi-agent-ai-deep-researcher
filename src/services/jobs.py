@@ -24,8 +24,10 @@ from dataclasses import dataclass, field
 
 from src.config import Settings
 from src.models.research import ResearchRequest, new_id
+from src.models.run import INTERRUPTED_ERROR
 from src.orchestration.budget import RunBudget
 from src.search.registry import ProviderSettings
+from src.services.question_check import assess_question
 from src.services.research_service import log_run_started, run_research, validate_request
 
 logger = logging.getLogger(__name__)
@@ -58,8 +60,9 @@ class RunManager:
     def __init__(self, repo, *, max_concurrent: int = 2, max_per_user: int = 1, max_queued: int = 10,
                  heartbeat_seconds: float = 15.0, stale_after_seconds: float = 120.0,
                  housekeeping_seconds: float = 60.0, worker_id: str | None = None,
-                 runner: Callable[..., object] = run_research):
-        self.repo, self.runner = repo, runner
+                 runner: Callable[..., object] = run_research,
+                 question_check: Callable[[ResearchRequest, Settings], None] = assess_question):
+        self.repo, self.runner, self.question_check = repo, runner, question_check
         self.max_per_user, self.max_queued = max_per_user, max_queued
         self.heartbeat_seconds, self.stale_after_seconds = heartbeat_seconds, stale_after_seconds
         self.housekeeping_seconds = housekeeping_seconds
@@ -85,8 +88,10 @@ class RunManager:
     # ------------------------------------------------------------------ public API
     def submit(self, request: ResearchRequest, owner_id: str, settings: Settings,
                provider_settings: ProviderSettings | None = None) -> str:
-        """Queue an investigation and return its run id. Raises `RunRejected` when a limit is reached."""
+        """Queue an investigation and return its run id. Raises `RunRejected` when a limit is reached, and
+        `InvalidQuestion` (a `ValueError`) when the LLM judges the question meaningless."""
         validate_request(request, owner_id)
+        self.question_check(request, settings)  # before admission: a rejected question never creates a run
         with self._admit:
             if self._closed:
                 raise ServiceBusy("The research service is restarting. Please try again in a moment.")
@@ -135,13 +140,33 @@ class RunManager:
             job = self._jobs.get(run_id)
         return job.done.wait(timeout) if job else True
 
+    def rerun(self, run_id: str, owner_id: str, settings: Settings,
+              provider_settings: ProviderSettings | None = None) -> str:
+        """Start a new run with the request of `owner_id`'s failed run `run_id`; the failed run stays in history.
+
+        The request goes through `submit` again, so current limits, permissions and question checks apply.
+        """
+        bundle = self.repo.load_run(run_id, owner_id)
+        if bundle is None:
+            raise ValueError("This investigation no longer exists.")
+        if bundle.summary.status != "failed":
+            raise ValueError("Only failed investigations can be re-run.")
+        new_run_id = self.submit(bundle.request.model_copy(deep=True), owner_id, settings, provider_settings)
+        self.repo.log_activity(owner_id, "run_rerun", new_run_id, {"rerun_of": run_id})
+        return new_run_id
+
     def shutdown(self, timeout: float | None = 5.0) -> None:
-        """Stop accepting work, ask running investigations to finish early and stop the threads."""
+        """Stop accepting work and the threads. Runs interrupted by the shutdown end as failed, so they can be re-run."""
         with self._cond:
             self._closed = True
-            for job in self._jobs.values():
+            for job in list(self._jobs.values()):
                 if job.budget is not None:
-                    job.budget.cancel()
+                    job.budget.interrupt()  # the worker writes what it has and records the run as failed
+                elif job in self._queue:  # still waiting in this process's queue: it will never start here
+                    self.repo.fail_run(job.run_id, job.owner_id, INTERRUPTED_ERROR)
+                    self._jobs.pop(job.run_id, None)
+                    job.done.set()
+            self._queue.clear()
             self._cond.notify_all()
         self._stop.set()
         for thread in (*self._workers, self._maintenance):

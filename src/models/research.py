@@ -6,7 +6,7 @@ import uuid
 from datetime import date, datetime, timezone
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 
 def new_id(prefix: str) -> str:
@@ -86,10 +86,60 @@ def is_demo_question(question: str) -> bool:
     return any(normalized == q.casefold() for q in DEMO_QUESTIONS)
 
 
+# Shown whenever a question is rejected as meaningless, by the cheap checks below or the LLM sense check at submit.
+INVALID_QUESTION = "This research question seems to be invalid! Please check input."
+
 QUESTION_EVIDENCE_NOTICE = (
     "Include a specific topic, timeframe or geography where useful. Answers depend on available evidence; "
     "forecasts are uncertain. Verify important conclusions against the original sources."
 )
+
+
+# Letter pairs that almost never occur inside English words (from a ~10k-word English sample). Keyboard mashing
+# produces them constantly; a real word rarely has more than one, at a compound boundary like "lock|down".
+_RARE_PAIRS = frozenset(
+    "bf bg bk bn bq bv bw bx bz cb cg cj cn cq cv cw cx dq dx dz fb fd fg fh fj fk fm fn fp fq fv fw fx fz gb gj gk "
+    "gq gv gx gz hb hc hf hg hh hj hk hp hq hv hx hz ih iw jb jc jd jf jg jh jj jk jl jm jn jq jr jt jv jx jy jz kc "
+    "kf kj km kq kv kx kz lj lq lr lw lx mf mh mj mq mv mw mx mz nq nx oq pj pm pn pq pv pw pz qa qb qc qd qe qf qg "
+    "qh qi qj qk qm qn qo qp qq qr qs qt qv qw qx qy qz rj rq rx sb sj sx tj tk tq tv tx uh uj uq uw vb vd vf vh vj "
+    "vk vl vm vn vp vq vr vt vu vv vw vx vy vz wb wc wf wg wj wk wm wp wq wt wu wv ww wx wy wz xb xf xg xj xk xn xo "
+    "xq xr xu xv xw xy yf yh yj yq yx yy zb zc zf zg zj zk zn zp zq zr zs zt zv zw zx".split())
+_KEYBOARD_ROWS = ["qwertyuiop", "asdfghjkl", "zxcvbnm"]
+_KEYBOARD_RUNS = frozenset(row[i:i + 4] for row in _KEYBOARD_ROWS + [r[::-1] for r in _KEYBOARD_ROWS]
+                           for i in range(len(row) - 3)) - {"erty", "trew"}  # property, strewn
+_REAL_ODD_WORDS = frozenset({"http", "https", "html", "qwerty"})
+_STOPWORDS = frozenset(
+    "a an and are as at be but by can could did do does for from had has have how i if in into is it its may me "
+    "might my of on or our should so than that the their them then there these they this those to was we were "
+    "what when where which who whom whose why will with would you your about any some".split())
+
+
+def _looks_like_gibberish(word: str) -> bool:
+    """Cheap keyboard-mashing check for one lowercase word; tuned to (almost) never flag real English words."""
+    if len(word) < 4 or word in _REAL_ODD_WORDS:
+        return False
+    return (any(run in word for run in _KEYBOARD_RUNS)                       # asdf, qwer, lkjh
+            or bool(re.search(r"(.)\1\1", word))                              # aaaa
+            or bool(re.fullmatch(r"(.{1,3})\1{2,}|([^aeiouy]{2})\2", word))   # jkjkjk, hjhj
+            or (len(word) >= 5 and not re.search(r"[aeiouy]", word))          # sdfgh
+            or sum(word[i:i + 2] in _RARE_PAIRS for i in range(len(word) - 1)) >= 2)  # ajdkf
+
+
+def gibberish_words(question: str) -> tuple[list[str], int]:
+    """Words that look like random typing, and how many words were checked. Acronyms (all caps) are skipped."""
+    words = [w.lower() for w in re.findall(r"[A-Za-z]+", question) if len(w) >= 4 and not w.isupper()]
+    return list(dict.fromkeys(w for w in words if _looks_like_gibberish(w))), len(words)
+
+
+def question_problem(question: str) -> str | None:
+    """Why the question would be rejected, for a live alert while typing; None when empty or valid."""
+    if not (question or "").strip():
+        return None
+    try:
+        ResearchRequest(question=question)
+    except ValidationError as exc:
+        return next((e["msg"].removeprefix("Value error, ") for e in exc.errors() if e["loc"] == ("question",)), None)
+    return None
 
 
 def question_guidance(question: str) -> str | None:
@@ -128,7 +178,20 @@ class ResearchRequest(BaseModel):
         words = re.findall(r"[^\W\d_]+", value.casefold())
         greeting_words = {"hello", "hi", "hey", "there", "friend", "good", "morning", "afternoon", "evening"}
         if len(set(words)) < 2 or (words and set(words) <= greeting_words):
-            raise ValueError("Please enter a research topic or question, rather than greetings or repeated words.")
+            raise ValueError(f"{INVALID_QUESTION} Enter a research topic or question, rather than greetings or "
+                             "repeated words.")
+        suspicious, _ = gibberish_words(value)
+        if suspicious:
+            quoted = ", ".join(f"“{w}”" for w in suspicious[:3])
+            verb = "looks" if len(suspicious) == 1 else "look"
+            raise ValueError(f"{INVALID_QUESTION} {quoted} {verb} like random typing or a typo. Please correct it "
+                             "and enter your question again, e.g. “How is AI changing drug discovery?”")
+        if re.search(r"\blorem ipsum\b", value, re.IGNORECASE):
+            raise ValueError(f"{INVALID_QUESTION} It looks like placeholder text; describe the topic you want "
+                             "researched.")
+        if not any(w.casefold() not in _STOPWORDS for w in re.findall(r"[A-Za-z]{3,}", value)):
+            raise ValueError(f"{INVALID_QUESTION} The question needs a subject to research, e.g. “electric "
+                             "vehicle adoption in India”.")
         return value
 
     @field_validator("context")

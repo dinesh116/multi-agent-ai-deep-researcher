@@ -203,3 +203,85 @@ def test_maintenance_heartbeats_queue_and_reaps_dead_runs(repo, settings, demo_r
         threading.Event().wait(0.05)
     assert status(repo, "run_orphan", CAROL) == "failed"
     assert status(repo, waiting) == "queued"  # our own waiting run was kept alive by heartbeats
+
+
+def test_meaningless_question_is_rejected_before_a_run_is_created(repo, settings, manager_factory):
+    from src.models.research import INVALID_QUESTION, ResearchRequest
+    from src.services.question_check import InvalidQuestion
+
+    def reject(request, _settings):
+        raise InvalidQuestion(f"{INVALID_QUESTION} It has no coherent topic.")
+    manager = manager_factory(question_check=reject)
+    request = ResearchRequest(question="Why does the colour seven taste louder than Tuesday", mode="live")
+    with pytest.raises(ValueError, match="seems to be invalid! Please check input"):
+        manager.submit(request, ALICE, settings)
+    assert not repo.list_runs(ALICE)
+
+
+# ------------------------------------------------------------------ interrupted runs and re-runs
+def test_shutdown_interrupts_a_real_run_as_failed_not_stopped(repo, settings, demo_request):
+    """An app shutdown mid-run is a failure the user can re-run, not a stop by the user."""
+    from src.models.run import INTERRUPTED_ERROR
+    holder, started = {}, threading.Event()
+    manager = RunManager(repo, runner=None, heartbeat_seconds=3600)
+
+    def runner(request, settings_, **kwargs):
+        def shut_down_at_retrieval(event):
+            if event.agent == "retriever" and event.status == "started":
+                started.set()
+                threading.Thread(target=manager.shutdown, kwargs={"timeout": 0}).start()
+                threading.Event().wait(0.3)  # the shutdown interrupts the budget while this run is in flight
+        holder["state"] = run_research(request, settings_, today=TODAY, on_event=shut_down_at_retrieval, **kwargs)
+    manager.runner = runner
+    run_id = manager.submit(demo_request, ALICE, settings)
+    assert started.wait(60) and manager.wait(run_id, 60)
+    bundle = repo.load_run(run_id, ALICE)
+    assert bundle.summary.status == "failed" and INTERRUPTED_ERROR in bundle.errors
+    assert not bundle.stop_reason.startswith("Stopped by user")
+
+
+def test_shutdown_fails_runs_still_waiting_in_the_queue(repo, settings, demo_request, manager_factory):
+    from src.models.run import INTERRUPTED_ERROR
+    runner = BlockingRunner()
+    manager = manager_factory(runner, max_concurrent=1)
+    manager.submit(demo_request, BOB, settings)
+    assert runner.started.acquire(timeout=5)
+    waiting = manager.submit(demo_request, ALICE, settings)
+    runner.release.set()
+    manager.shutdown(timeout=5)
+    progress = repo.get_progress(waiting, ALICE)
+    assert progress.status == "failed" and progress.errors == [INTERRUPTED_ERROR]
+    assert manager.wait(waiting, 1) and len(runner.calls) == 1  # never executed
+
+
+def test_crashed_runs_are_reaped_with_the_interrupted_message(repo, demo_request):
+    from src.models.run import INTERRUPTED_ERROR
+    repo.create_run("run_crashed", demo_request, ALICE, worker_id="dead-process")
+    with repo.backend.session() as db:
+        db.execute("UPDATE runs SET heartbeat_at = ? WHERE id = ?",
+                   ((utc_now() - timedelta(seconds=600)).isoformat(), "run_crashed"))
+    assert repo.reap_stale_runs(120) == ["run_crashed"]
+    progress = repo.get_progress("run_crashed", ALICE)
+    assert progress.status == "failed" and progress.errors == [INTERRUPTED_ERROR]
+
+
+def test_rerun_starts_a_new_run_with_the_same_request(repo, settings, demo_request, manager_factory):
+    def broken(*args, **kwargs):
+        raise RuntimeError("the computer went to sleep")
+    manager = manager_factory(broken)
+    failed = manager.submit(demo_request, ALICE, settings)
+    assert manager.wait(failed, 5) and status(repo, failed) == "failed"
+    runner = BlockingRunner()
+    manager.runner = runner
+    with pytest.raises(ValueError, match="no longer exists"):
+        manager.rerun(failed, BOB, settings)  # only the owner can re-run it
+    again = manager.rerun(failed, ALICE, settings)
+    assert again != failed and runner.started.acquire(timeout=5)
+    assert repo.load_run(again, ALICE).request.question == demo_request.question
+    assert status(repo, failed) == "failed"  # the failed run stays in the history
+    assert {"kind": "run_rerun", "run_id": again} .items() <= next(
+        a for a in repo.list_activity(ALICE) if a["kind"] == "run_rerun").items()
+    runner.release.set()
+    assert manager.wait(again, 5)
+    with pytest.raises(ValueError, match="Only failed"):
+        manager.rerun(again, ALICE, settings)

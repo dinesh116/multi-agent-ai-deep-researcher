@@ -79,8 +79,16 @@ def test_report_structure_and_citations(stored_run):
     _, bundle = stored_run
     report = bundle.report
     keys = [s.key for s in report.sections]
-    assert keys == ["scope", "executive_summary", "key_findings", "detailed_analysis", "evidence", "trends",
-                    "implications", "risks", "next_steps", "limitations", "visualizations", "references"]
+    # Summary first, then Introduction → Analysis → Findings → Recommendations → Conclusion, then supporting material
+    assert keys == ["executive_summary", "introduction", "detailed_analysis", "evidence", "key_findings", "next_steps",
+                    "conclusion", "limitations", "visualizations", "references"]
+    assert [s.title for s in report.sections][:7] == ["Executive summary", "Introduction", "Analysis",
+                                                       "Evidence overview", "Findings", "Recommendations", "Conclusion"]
+    assert report.section("executive_summary").content.startswith("**Objective:**")
+    assert "| Item | Detail |" in report.section("introduction").content  # scope at a glance as a table
+    assert "### Risks and alternative interpretations" in report.section("key_findings").content
+    assert report.section("next_steps").content.startswith("1. **")  # numbered, actionable recommendations
+    assert "evidence gathered is" in report.section("conclusion").content
     assert report.references and all(r["synthetic"] for r in report.references)
     assert report.citation_checks and all(c.valid for c in report.citation_checks)
     assert "synthetic demo data" in report.section("limitations").content
@@ -190,3 +198,11 @@ def test_demo_mode_never_uses_network(settings, demo_request):
     assert demo_request.mode == ResearchMode.DEMO
     state = run_research(demo_request, settings, today=TODAY)
     assert state["report"] is not None and all(r.provider == "demo" or r.provider == "lead" for r in state["search_log"])
+
+
+def test_html_export_keeps_banners_and_lists(stored_run):
+    from src.reporting.render import to_html
+    _, bundle = stored_run
+    page = to_html(bundle.report, demo=True)
+    assert '<blockquote class="banner">' in page and "&gt; " not in page  # banners render as quotes, not "> text"
+    assert "<li>Separate well-supported findings" in page  # lists after bold labels are real lists

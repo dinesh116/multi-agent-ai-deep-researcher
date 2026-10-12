@@ -13,7 +13,7 @@ from src.orchestration.state import AGENT_ORDER
 from src.services.run_events import ProgressTracker
 from src.ui.components import AGENT_INFO, AGENT_TITLES, DEPTH_LABELS, card, demo_banner, eyebrow, html
 from src.ui.state import (active_run_id, current_user, get_repo, get_run_manager, load_selected_run, new_research,
-                          open_run, select_run)
+                          open_run, rerun_button, select_run)
 
 repo = get_repo()
 POLL_SECONDS = 1.5
@@ -155,6 +155,9 @@ elif bundle.summary.status == "cancelled":
     st.info(f"Stopped by you: {found}. "
             + ("The report covers only the evidence gathered before stopping." if bundle.report else
                "It was stopped before it started."), icon=":material/stop_circle:")
+elif bundle.summary.status == "failed":
+    st.error("This investigation did not finish. You can re-run it with the same question and settings; the "
+             "details of what went wrong are below.", icon=":material/error:")
 if usage:
     with card("usage"):
         m = st.columns(7)
@@ -194,8 +197,11 @@ for warning in dict.fromkeys(bundle.warnings):
 for error in bundle.errors:
     st.error(error)
 
-a, b = st.columns([3, 1])
+a, r, b = st.columns([2, 1, 1])
 if a.button("New research", icon=":material/add:", key="log_new"):
     new_research()
+if bundle.summary.status == "failed":
+    with r:
+        rerun_button(bundle.summary.id, key="log_rerun", width="stretch")
 if b.button("View results →", type="primary", width="stretch", key="log_results"):
     open_run(bundle.summary.id)

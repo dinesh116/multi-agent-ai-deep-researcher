@@ -61,6 +61,9 @@ class RunBundle(BaseModel):
 
 
 ACTIVE_STATUSES = ("queued", "running")
+# Recorded when a run stops because the app, its process or the computer stopped, not because of the research.
+INTERRUPTED_ERROR = ("This run was interrupted because the app or the computer stopped before it finished. "
+                     "Use Re-run to start it again.")
 
 
 class RunProgress(BaseModel):

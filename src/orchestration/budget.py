@@ -35,9 +35,19 @@ class RunBudget:
         with self._lock:
             self._mark("cancelled")
 
+    def interrupt(self) -> None:
+        """Stop gathering because the app is shutting down. Unlike a user's stop, the run then ends as failed."""
+        with self._lock:
+            self._mark("interrupted")
+
     @property
     def cancelled(self) -> bool:
-        return "cancelled" in self.usage.exhausted
+        """Stopped by the user or interrupted: either way, no further searches or LLM calls."""
+        return "cancelled" in self.usage.exhausted or self.interrupted
+
+    @property
+    def interrupted(self) -> bool:
+        return "interrupted" in self.usage.exhausted
 
     def try_search(self) -> bool:
         """Reserve one search. Returns False (and records why) when a limit is reached."""

@@ -269,7 +269,8 @@ Workflows on pull requests from forks wait for a maintainer to approve them (**C
   not included.
 - Charts come only from uploaded CSV rows; web and PDF tables are not converted yet.
 - Cost figures are estimates from configured prices, not invoices. There are no per-user token or cost quotas.
-- Interrupted runs cannot be resumed yet (planned; see [docs/plans/run-execution.md](docs/plans/run-execution.md)).
+- Interrupted runs (app or computer stopped mid-run) are marked failed; **Re-run** starts them again from the
+  beginning rather than resuming them.
 
 ## Troubleshooting
 

@@ -20,16 +20,16 @@ in one bounded, process-wide executor (`RunManager`), and **all progress is pers
 and read progress from the database. The `RunManager` interface allows an external worker later without changing
 pages or agents.
 
-Target run lifecycle (states in [brackets] are planned for Phases 4–5):
+Run lifecycle:
 
 ```
-queued → running ⇄ [awaiting_input] → completed
+queued → running → completed
    ↓        ↓
-cancelled  cancelled (partial report) · failed · [interrupted] (process died) → [Resume] → running
+cancelled  cancelled (partial report) · failed (incl. interrupted: process, app or computer stopped) → [Re-run] → new run
 ```
 
-Implemented today: `queued`, `running`, `completed`, `cancelled` and `failed`. A run whose process dies is reaped as
-`failed` until Phase 4 adds `interrupted` and Resume.
+A run interrupted by a crash or shutdown ends as `failed` with a standard message, and **Re-run** submits its stored
+request as a new run. Checkpointing and resuming from the interruption point (Phase 4) was dropped as not required.
 
 ## Phases
 
@@ -39,8 +39,8 @@ Implemented today: `queued`, `running`, `completed`, `cancelled` and `failed`. A
 | 1 | Persist progress incrementally: run heartbeat/progress/cancel columns, buffered event sink, heartbeat-based stale-run reaping | Done |
 | 2 | `RunManager`: bounded executor, per-user and global limits, queued state, cooperative "stop & write report" cancel | Done |
 | 3 | DB-driven progress page (`st.fragment(run_every=…)`), reattach from sidebar/library, Stop button | Done |
-| 4 | `RepositoryCheckpointSaver` (SQLite + Turso), id-merging reducers, `RunBudget.restore`, Resume for interrupted runs | Pending |
-| 5 | Optional plan review via `interrupt()`; paused runs release their worker slot | Pending |
+| 4 | ~~Checkpointer and Resume for interrupted runs~~: replaced by marking interrupted runs failed (including on graceful shutdown) and a **Re-run** action | Dropped (2026-10-12) |
+| 5 | Optional plan review via `interrupt()`; paused runs release their worker slot | Not planned |
 
 ## Phase 0 findings
 
@@ -88,7 +88,6 @@ Implemented today: `queued`, `running`, `completed`, `cancelled` and `failed`. A
 
 ## Risks and mitigations
 
-- **Turso write volume:** event writes are batched; checkpoints will be deleted after completion (Phase 4).
-- **Process restarts:** heartbeat reaping today; `interrupted` plus Resume in Phase 4.
-- **Repeated work on resume:** a resumed node restarts from its beginning; the 24-hour search cache and restored
-  budget bound the cost.
+- **Turso write volume:** event writes are batched.
+- **Process restarts:** heartbeat reaping marks interrupted runs failed; Re-run starts them again from the beginning.
+- **Repeated work on re-run:** a re-run repeats the whole investigation; the 24-hour search cache bounds the cost.

@@ -58,6 +58,7 @@ def _md_to_safe_html(text: str) -> str:
     # Escape any raw HTML coming from sources before Markdown conversion, so retrieved content cannot inject markup.
     escaped = html.escape(text, quote=False)
     escaped = re.sub(r"&lt;(https?://[^\s&]+)&gt;", r"<\1>", escaped)  # keep autolinks in the reference list
+    escaped = re.sub(r"(?m)^&gt; ", "> ", escaped)  # keep Markdown blockquotes (banners); they are not raw HTML
     return markdown.markdown(escaped, extensions=["tables", "sane_lists"])
 
 

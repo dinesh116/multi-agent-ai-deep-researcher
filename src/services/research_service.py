@@ -10,6 +10,7 @@ from src.agents.gap_analyst import STOPPED_BY_USER
 from src.config import Settings
 from src.models.evidence import AgentEvent, AgentStatus
 from src.models.research import ResearchMode, ResearchRequest, is_demo_question, new_id
+from src.models.run import INTERRUPTED_ERROR
 from src.orchestration.budget import RunBudget
 from src.orchestration.graph import build_graph
 from src.orchestration.state import AGENT_ORDER, ResearchState
@@ -113,7 +114,11 @@ def run_research(request: ResearchRequest, settings: Settings, repo=None, on_eve
                         else:
                             final[key] = value
             status = "completed" if final.get("report") else "failed"
-            if budget.cancelled:
+            if budget.interrupted:  # the app shut down mid-run: a failure the user can re-run, not their stop
+                status = "failed"
+                final["stop_reason"] = INTERRUPTED_ERROR
+                final["errors"] = final.get("errors", []) + [INTERRUPTED_ERROR]
+            elif budget.cancelled:
                 status = "cancelled"
                 final["stop_reason"] = STOPPED_BY_USER
         except Exception as exc:  # the graph itself failed: keep whatever evidence exists

@@ -136,11 +136,25 @@ not live-model attack evaluations.
 
 Both research composers validate requests through `ResearchRequest` before submission. Questions are normalized,
 limited to 12–600 characters and must contain at least three words of three or more English letters. Obvious
-single-word repetition and greeting-only input are rejected. The service revalidates requests before queueing or
+single-word repetition and greeting-only input are rejected, as are placeholder text, questions made only of
+filler words, and questions containing any word that looks like keyboard mashing. A word looks like mashing when it
+contains a keyboard run (`asdf`), a tripled letter, a short repeated unit (`jkjkjk`), no vowel (5+ letters) or two
+letter pairs that almost never occur in English (`ajdkf`); all-caps acronyms are skipped.
+
+Questions made of real words can still be meaningless ("why does the colour seven taste louder than Tuesday"). For
+live runs with the LLM enabled, `RunManager.submit` therefore asks the LLM for a short sense check
+(`services/question_check.py`) before a run is created. The check is permissive (broad, speculative or controversial
+questions pass), treats the question as untrusted data, and fails open: without an LLM, or if the call fails, only the
+rules above apply.
+
+Every rejection starts with "This research question seems to be invalid! Please check input." followed by the reason.
+No run is created and nothing is researched, so no report can be generated from a meaningless question. Both
+composers show rule-based problems as a warning under the question as soon as it is entered, keep the text so it can
+be corrected, and report that the research was not started. The service revalidates requests before queueing or
 execution, including models modified by programmatic callers. Control characters are removed as before.
 
 Broad phrases such as “tell me everything” receive an advisory scope hint; they are not blocked or rewritten.
 The composers remind users to specify scope and verify evidence, and that forecasts remain uncertain. These
-inexpensive checks make no LLM calls and do not establish factual correctness, detect all meaningless input or
-prevent prompt injection/hallucinations. Existing evidence and output validation remain necessary. Interactive
-clarification and semantic premise validation are not implemented.
+checks do not establish factual correctness, detect all meaningless input or prevent prompt injection/hallucinations.
+Existing evidence and output validation remain necessary. Interactive clarification and premise validation (whether
+the question's assumptions are true) are not implemented.

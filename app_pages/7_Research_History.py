@@ -6,7 +6,8 @@ import streamlit as st
 
 from src.ui.components import DEPTH_LABELS, ago, card, eyebrow, mode_tag, status_tag, strip_citations
 from src.models.run import ACTIVE_STATUSES
-from src.ui.state import current_user, get_repo, new_research, open_progress, open_run, selected_run_id
+from src.ui.state import (current_user, get_repo, new_research, open_progress, open_run, rerun_button,
+                          selected_run_id)
 
 repo, user = get_repo(), current_user()
 head, action = st.columns([4, 1], vertical_alignment="center")
@@ -64,12 +65,17 @@ with tab_runs:
                 c[4].markdown(f'<div class="ds-cell">{ago(run.created_at)}</div>', unsafe_allow_html=True)
                 b1, b2 = c[5].columns([1.5, 1])
                 live = run.status in ACTIVE_STATUSES
-                if b1.button("Follow" if live else "Open", key=f"open_{run.id}"):
+                if run.status == "failed":  # interrupted or failed: offer to start it again
+                    with b1:
+                        rerun_button(run.id, key=f"rerun_{run.id}")
+                elif b1.button("Follow" if live else "Open", key=f"open_{run.id}"):
                     if live:
                         open_progress(run.id)
                     else:
                         open_run(run.id)
                 with b2.popover("", icon=":material/more_horiz:"):
+                    if run.status == "failed" and st.button("Open details", key=f"open_{run.id}"):
+                        open_progress(run.id)
                     if run.summary:
                         st.markdown("**Summary of findings**")
                         # Inline " - **Finding...**" items are put on their own lines as a bulleted list.
@@ -90,7 +96,7 @@ with tab_runs:
         st.caption(f"Showing {len(runs)} of {counts['all']} investigations")
 
 LABELS = {"login": "Signed in", "run_started": "Started research", "run_completed": "Research completed",
-          "run_failed": "Research failed", "run_cancelled": "Stopped research", "profile_updated": "Updated profile", "run_deleted": "Deleted a run", "qa": "Asked a follow-up question",
+          "run_failed": "Research failed", "run_rerun": "Re-ran research", "run_cancelled": "Stopped research", "profile_updated": "Updated profile", "run_deleted": "Deleted a run", "qa": "Asked a follow-up question",
           "export": "Exported a report", "upload": "Uploaded a document", "data_deleted": "Deleted all data"}
 
 with tab_activity:
