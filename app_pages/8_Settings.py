@@ -76,6 +76,7 @@ st.subheader("App-wide settings (admin)")
 st.dataframe(pd.DataFrame([
     {"Setting": "OPENROUTER_API_KEY", "Status": mask_secret(env.openrouter_api_key), "Used for": "LLM planning, extraction, synthesis, Q&A"},
     {"Setting": "TAVILY_API_KEY", "Status": mask_secret(env.tavily_api_key), "Used for": "Live web and news search"},
+    {"Setting": "PINECONE_API_KEY", "Status": mask_secret(env.pinecone_api_key), "Used for": "Vector search and embeddings for live research"},
     {"Setting": "TURSO_AUTH_TOKEN", "Status": mask_secret(env.turso_auth_token), "Used for": "Persistent shared storage"},
     {"Setting": "Sign-in ([auth])", "Status": (", ".join(configured_providers()) or "configured") if auth_enabled()
      else "not configured",

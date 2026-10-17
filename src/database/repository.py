@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -21,6 +23,7 @@ from src.models.research import BudgetUsage, ResearchPlan, ResearchRequest, new_
 from src.models.run import ACTIVE_STATUSES, INTERRUPTED_ERROR, RunBundle, RunProgress, RunSummary
 from src.models.visualization import EvidenceChart
 
+logger = logging.getLogger(__name__)
 SCHEMA = Path(__file__).with_name("schema.sql")
 LOCAL_OWNER = "local"
 RUN_CHILD_TABLES = ("sources", "passages", "assessments", "claims", "matrix_rows", "evidence_links", "contradictions",
@@ -43,9 +46,11 @@ def _dump(model) -> str:
 
 
 class Repository:
-    def __init__(self, db_path: Path | str, turso_url: str | None = None, turso_token: str | None = None, backend=None):
+    def __init__(self, db_path: Path | str, turso_url: str | None = None, turso_token: str | None = None, backend=None,
+                 on_run_deleted: Callable[[str], None] | None = None):
         self.db_path = Path(db_path)
         self.backend = backend or make_backend(self.db_path, turso_url, turso_token)
+        self.on_run_deleted = on_run_deleted  # removes a run's vectors in Pinecone; the database is the source of truth
         with self.backend.session() as db:
             db.script(SCHEMA.read_text())
             self._migrate(db)
@@ -251,7 +256,17 @@ class Repository:
             for table in RUN_CHILD_TABLES:
                 db.execute(f"DELETE FROM {table} WHERE run_id = ?", (run_id,))
             db.execute("DELETE FROM runs WHERE id = ? AND owner_id = ?", (run_id, owner_id))
-            return True
+        self._drop_vectors(run_id)
+        return True
+
+    def _drop_vectors(self, run_id: str) -> None:
+        """Best effort: the database delete has already happened, so a Pinecone error is logged, not raised."""
+        if self.on_run_deleted is None:
+            return
+        try:
+            self.on_run_deleted(run_id)
+        except Exception:
+            logger.warning("Could not delete the Pinecone vectors of run %s.", run_id, exc_info=True)
 
     # ------------------------------------------------------------------ live progress (durable execution)
     @staticmethod
@@ -368,6 +383,8 @@ class Repository:
                     db.execute(f"DELETE FROM {table} WHERE run_id = ?", (run_id,))
                 db.execute("DELETE FROM runs WHERE id = ?", (run_id,))
             db.execute("DELETE FROM activity WHERE owner_id LIKE 'guest:%' AND created_at < ?", (cutoff,))
+        for run_id in ids:
+            self._drop_vectors(run_id)
         return len(ids)
 
     def delete_user_data(self, owner_id: str) -> int:

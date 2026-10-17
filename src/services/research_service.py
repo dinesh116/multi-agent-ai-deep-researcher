@@ -63,7 +63,7 @@ def run_research(request: ResearchRequest, settings: Settings, repo=None, on_eve
     if documents is None and repo is not None and request.document_ids:
         documents = repo.get_documents(request.document_ids, owner_id)  # only the owner's own documents
     providers = providers or build_providers(settings, request.mode, {p.value for p in request.source_preferences},
-                                             documents or [], provider_settings)
+                                             documents or [], provider_settings, run_id=run_id)
     if llm is None and request.use_llm and request.mode == ResearchMode.LIVE:
         llm = LLMClient(settings)
     budget = budget or RunBudget(request.budget())

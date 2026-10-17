@@ -101,7 +101,7 @@ flowchart TB
 | `src/agents/` | The eight graph agents plus Research Q&A. |
 | `src/search/` | Provider interface and implementations, search cache, SSRF-safe HTTP fetching. |
 | `src/ingestion/` | PDF, text, Markdown and CSV extraction with location-preserving chunking. |
-| `src/evidence/`, `src/analysis/`, `src/retrieval/` | Evidence store, claim extraction and validation, evidence matrix, contradictions, BM25. |
+| `src/evidence/`, `src/analysis/`, `src/retrieval/` | Evidence store, claim extraction and validation, evidence matrix, contradictions, BM25, Pinecone vector search. |
 | `src/reporting/` | Markdown, sanitised HTML and PDF export. |
 | `src/database/` | Schema, migrations, SQLite and Turso backends, owner-scoped repository. |
 | `src/models/` | Pydantic models for requests, plans, evidence, runs, profiles and charts. |
@@ -212,9 +212,13 @@ and analysis in short, plain, neutral prose, and its rewrite is rejected if cita
   quotation. Duplicate labels, conflicting units, non-finite values and impossible percentages are rejected; missing
   values are omitted, never filled.
 
-**Retrieval** uses BM25 for ranking passages, matching claims to subquestions, searching the demo dataset and
-uploads, and Q&A. Research questions hinge on exact terms (product names, metrics, methods), and BM25 is offline,
-deterministic and testable. Embeddings can be added later behind the `Retriever` interface.
+**Retrieval** has two rankers behind one interface. BM25 (`src/retrieval/bm25.py`) ranks passages in demo mode,
+matches claims to subquestions, ranks evidence rows and insights, and is the fallback everywhere. For live
+research with `PINECONE_API_KEY`, `src/retrieval/vector.py` embeds passages, uploaded sections and Q&A questions
+with Pinecone Inference (`llama-text-embed-v2` by default) and ranks them by cosine similarity in Pinecone. Each
+investigation has its own namespace (`run-<run id>`), and deleting a run deletes its namespace. Vectors store
+only an id, a kind and a source id; passage text stays in the database. Passages from the source evaluator and
+Q&A use vectors; a Pinecone error falls back to BM25 and is noted in the run's provider notes.
 
 ## 8. Run execution
 
@@ -335,7 +339,7 @@ failures are isolated from research execution. Details are in [observability.md]
 | LangGraph for orchestration | Typed state, reducers, conditional edges and parallel branches; a path to checkpoints | Framework dependency; agents themselves stay framework-free (`agent.run(state, ctx)`) |
 | In-process job runner instead of a worker service | Streamlit Community Cloud runs a single process with no separate workers | Runs stop if the process stops (they are marked failed and can be re-run from the start) |
 | All progress in the database | Any session or device can reattach; limits work across instances | More writes; batched to keep Turso traffic low |
-| BM25 rather than embeddings | Exact-term questions, offline, deterministic, no vector store | Weaker on paraphrase |
+| BM25 for demo and as fallback; Pinecone for live research | Demo stays offline and deterministic; live runs handle paraphrase | Two rankers to keep consistent; live runs depend on a hosted service and its cost |
 | Turso embedded replica | Persistent, shared storage on a free tier with fast local reads | Writes pay network latency to the database region |
 | Owner checks in the repository | Isolation cannot be bypassed by a UI bug | Every query carries an owner id |
 | Demo limited to three questions | The synthetic dataset covers one domain; other questions would mislead | Less freedom in demo mode |

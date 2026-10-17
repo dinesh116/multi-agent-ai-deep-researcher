@@ -24,6 +24,7 @@ from pydantic import ValidationError
 from src.config import APP_NAME, Settings, get_settings
 from src.database.repository import LOCAL_OWNER, Repository
 from src.models.run import ACTIVE_STATUSES, RunBundle
+from src.retrieval.vector import run_cleanup
 from src.services.jobs import RunManager, RunRejected
 from src.search.registry import ProviderSettings
 
@@ -53,7 +54,8 @@ class CurrentUser:
 def get_repo() -> Repository:
     require_auth_configuration()
     settings = get_settings()
-    repo = Repository(settings.db_path, settings.turso_database_url, settings.turso_auth_token)
+    repo = Repository(settings.db_path, settings.turso_database_url, settings.turso_auth_token,
+                      on_run_deleted=run_cleanup(settings))
     repo.reap_stale_runs(settings.run_stale_after_seconds)  # only runs whose worker stopped heartbeating
     repo.purge_guest_data()
     return repo

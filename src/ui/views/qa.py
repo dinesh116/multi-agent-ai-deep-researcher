@@ -3,6 +3,7 @@ import streamlit as st
 
 from src.agents.qa import answer_question
 from src.models.run import RunBundle
+from src.retrieval.vector import open_run_vectors
 from src.services.llm import LLMClient
 
 
@@ -27,7 +28,8 @@ def render(bundle: RunBundle, repo, settings, user) -> None:
         st.markdown(question)
     with st.chat_message("assistant", avatar=":material/science:"):
         with st.spinner("Retrieving evidence…"):
-            answer = answer_question(bundle, question, llm=llm, use_llm=use_llm and not user.is_guest)
+            vectors = open_run_vectors(settings, bundle.summary.mode, bundle.summary.id, [])  # None: keyword search
+            answer = answer_question(bundle, question, llm=llm, use_llm=use_llm and not user.is_guest, vectors=vectors)
         st.markdown(answer.answer)
         if answer.conflicts:
             st.markdown("**Conflicting evidence:**\n" + "\n".join(f"- {c}" for c in answer.conflicts))

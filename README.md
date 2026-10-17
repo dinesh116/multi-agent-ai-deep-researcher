@@ -6,7 +6,8 @@ passages, surfaces contradictions, follows up on gaps within a fixed budget, and
 export, reopen and question.
 
 **Stack:** LangGraph (orchestration) · Streamlit (UI) · OpenRouter via the OpenAI SDK (optional LLM) ·
-OpenAlex, Crossref, arXiv and Tavily (sources) · SQLite or Turso (storage) · LangSmith (optional tracing).
+OpenAlex, Crossref, arXiv and Tavily (sources) · Pinecone (vector search, optional) · SQLite or Turso (storage) ·
+LangSmith (optional tracing).
 
 > **Read this first.** Demo mode uses a **synthetic, fictional** dataset and says so everywhere. A citation that
 > passes validation is *traceable* to a source passage, which is not the same as *true*. Check important
@@ -156,6 +157,8 @@ any `[section]`. Restart the app after changing them.
 | | `LLM_TIMEOUT_SECONDS` | `60` | Per-request timeout |
 | | `LLM_INPUT_USD_PER_MILLION`, `LLM_OUTPUT_USD_PER_MILLION` | `0` (unknown) | Model prices for cost estimates |
 | Search | `TAVILY_API_KEY` | — | Live web and news search |
+| | `PINECONE_API_KEY` | — | Enables vector search for live research: passages are embedded with Pinecone Inference and ranked by similarity. Without it, keyword search (BM25) is used. Demo mode always uses keyword search |
+| | `PINECONE_INDEX`, `PINECONE_CLOUD`, `PINECONE_REGION`, `PINECONE_EMBED_MODEL` | `deep-researcher`, `aws`, `us-east-1`, `llama-text-embed-v2` | Index (created on first use) and embedding model |
 | | `CONTACT_EMAIL` | — | Sent to OpenAlex and Crossref for polite API use (recommended) |
 | | `HTTP_TIMEOUT_SECONDS` | `20` | Search and fetch timeout |
 | Storage | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | — | Hosted Turso database; both required |
@@ -226,7 +229,7 @@ src/search/             provider interface; Tavily, OpenAlex, Crossref, arXiv, d
 src/ingestion/          PDF, text, Markdown and CSV extraction; location-preserving chunking
 src/evidence/           evidence store (normalisation, deduplication, syndication) and citations
 src/analysis/           text heuristics, claims and claim validation, evidence matrix, visualisation extraction
-src/retrieval/          BM25 index
+src/retrieval/          BM25 keyword index; Pinecone vector index and embeddings (live research)
 src/reporting/          Markdown, sanitised HTML and PDF export
 src/database/           schema, SQLite and Turso backends, owner-scoped repository
 src/models/             Pydantic models: request and plan, evidence, run, profile, visualisation
@@ -264,7 +267,9 @@ Workflows on pull requests from forks wait for a maintainer to approve them (**C
 - Without an LLM, analysis relies on wording cues: paraphrased agreement can be missed and some contradictions are
   false positives (they are labelled heuristic). With an LLM, each candidate contradiction is reviewed.
 - Academic results are usually abstracts only; this is shown per source and in the report.
-- Retrieval is keyword-based (BM25), so heavily paraphrased questions retrieve less well than with embeddings.
+- Vector search applies only to live research and needs `PINECONE_API_KEY`. Demo mode and runs without a key use
+  keyword search (BM25), so heavily paraphrased questions retrieve less well there. The similarity cut-off
+  (`MIN_SIMILARITY` in `src/retrieval/vector.py`) is not yet tuned on real investigations.
 - Full-text fetching is limited to six pages per round and skips non-HTML content. Scanned PDFs need OCR, which is
   not included.
 - Charts come only from uploaded CSV rows; web and PDF tables are not converted yet.
@@ -298,5 +303,5 @@ Workflows on pull requests from forks wait for a maintainer to approve them (**C
 | [docs/plans/run-execution.md](docs/plans/run-execution.md) | Engineers | Durable run execution design and roadmap |
 
 **Roadmap:** resumable runs with checkpoints, optional plan review before research starts, hybrid BM25 plus
-embedding retrieval, OCR, more providers (Semantic Scholar, news APIs), scheduled re-runs, and automatic model price
+vector retrieval for demo mode, OCR, more providers (Semantic Scholar, news APIs), scheduled re-runs, and automatic model price
 lookup.

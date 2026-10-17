@@ -47,6 +47,11 @@ class Settings:
     max_concurrent_runs: int = 2  # investigations executing at once in this app process
     max_active_runs_per_user: int = 1  # queued + running investigations per user
     max_queued_runs: int = 10  # queued + running investigations across all users before new ones are refused
+    pinecone_api_key: str | None = None  # secret; enables vector search (and embeddings) for live research
+    pinecone_index: str = "deep-researcher"  # created on first use if it does not exist
+    pinecone_cloud: str = "aws"  # serverless index location, used only when the index is created
+    pinecone_region: str = "us-east-1"
+    pinecone_embed_model: str = "llama-text-embed-v2"  # hosted by Pinecone Inference, same key as the index
 
     @property
     def llm_configured(self) -> bool:
@@ -55,6 +60,10 @@ class Settings:
     @property
     def web_search_configured(self) -> bool:
         return bool(self.tavily_api_key)
+
+    @property
+    def pinecone_configured(self) -> bool:
+        return bool(self.pinecone_api_key)
 
     @property
     def max_upload_bytes(self) -> int:
@@ -98,4 +107,9 @@ def get_settings() -> Settings:
         max_active_runs_per_user=max(1, int(_env("MAX_ACTIVE_RUNS_PER_USER", "1"))),
         max_queued_runs=max(1, int(_env("MAX_QUEUED_RUNS", "10"))),
         admin_emails=tuple(e.strip().lower() for e in (_env("ADMIN_EMAILS", "") or "").split(",") if e.strip()),
+        pinecone_api_key=_env("PINECONE_API_KEY"),
+        pinecone_index=_env("PINECONE_INDEX", "deep-researcher"),
+        pinecone_cloud=_env("PINECONE_CLOUD", "aws"),
+        pinecone_region=_env("PINECONE_REGION", "us-east-1"),
+        pinecone_embed_model=_env("PINECONE_EMBED_MODEL", "llama-text-embed-v2"),
     )
